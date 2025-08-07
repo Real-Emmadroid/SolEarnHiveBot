@@ -1,5 +1,5 @@
 import os
-import psycopg2
+import psycopg
 from datetime import datetime, timedelta
 import time
 from functools import wraps
@@ -792,4 +792,5 @@ def save_reaction(message_id: int, username: str) -> bool:
 # ========================
 if __name__ == "__main__":
     init_databases()
+
     print("Databases initialized in Supabase PostgreSQL database.")
