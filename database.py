@@ -12,7 +12,7 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 
 def get_db_connection():
     """Get a connection to the Supabase PostgreSQL database."""
-    conn = psycopg2.connect(DATABASE_URL, sslmode="require")
+    conn = psycopg.connect(DATABASE_URL, sslmode="require")
     return conn
 
 # ========================
@@ -60,6 +60,15 @@ def init_databases():
                     twitter_handle TEXT,
                     last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY(team_id) REFERENCES teams(id) ON DELETE SET NULL
+                );
+            ''')
+
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS verified_raiders (
+                    user_id BIGINT PRIMARY KEY,
+                    twitter TEXT NOT NULL,
+                    nationality TEXT NOT NULL,
+                    approved_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
             ''')
 
@@ -239,6 +248,20 @@ def init_databases():
             """)
             
             cursor.execute("""
+                CREATE TABLE IF NOT EXISTS user_languages (
+                    user_id BIGINT PRIMARY KEY,
+                    language_code TEXT DEFAULT 'en'
+                )
+            """)
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS group_languages (
+                    chat_id BIGINT PRIMARY KEY,
+                    language_code TEXT DEFAULT 'en'
+                )
+            """)
+            
+            cursor.execute("""
                 CREATE TABLE IF NOT EXISTS project_links (
                     id SERIAL PRIMARY KEY,
                     project_name TEXT NOT NULL,
@@ -284,6 +307,15 @@ def init_databases():
                 CREATE TABLE IF NOT EXISTS group_settings (
                     chat_id BIGINT PRIMARY KEY,
                     chat_mode BOOLEAN DEFAULT FALSE
+                )
+            """)
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS leaderboard_state (
+                    id SERIAL PRIMARY KEY,
+                    topic_id INTEGER NOT NULL,
+                    message_id BIGINT NOT NULL,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
 
@@ -356,7 +388,58 @@ def init_databases():
                     vote_count INTEGER DEFAULT 0,
                     last_voted TIMESTAMP,
                     leaderboard_position INTEGER,
-                    display_link TEXT
+                    display_link TEXT,
+                    contactme_link TEXT,
+                    custom_photo_url TEXT,
+                    trend_duration_until TIMESTAMP,
+                    vote_expiry TIMESTAMP,
+                    verified BOOLEAN DEFAULT FALSE
+                )
+            """)
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS hype_cooldowns (
+                    user_id BIGINT NOT NULL,
+                    group_id BIGINT NOT NULL,
+                    last_used TIMESTAMP NOT NULL,
+                    PRIMARY KEY (user_id, group_id)
+                )
+            """)
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS broadcast_users (
+                    user_id BIGINT PRIMARY KEY
+                )
+            """)
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS hyped_projects (
+                    id SERIAL PRIMARY KEY,
+                    group_id BIGINT,
+                    group_name TEXT,
+                    blockchain TEXT,
+                    contract_address TEXT,
+                    token_name TEXT,
+                    display_link TEXT,
+                    marketcap TEXT,
+                    image_file_id TEXT,
+                    last_voted TIMESTAMP,
+                    leaderboard_position INTEGER,
+                    vote_count INTEGER DEFAULT 0,
+                    trend_duration_until TIMESTAMP,
+                    vote_expiry TIMESTAMP,
+                    timestamp TIMESTAMPTZ DEFAULT NOW()
+                )
+            """)
+            
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS group_reviews (
+                    id SERIAL PRIMARY KEY,
+                    group_id BIGINT NOT NULL REFERENCES group_votes(group_id),
+                    user_id BIGINT NOT NULL,
+                    rating INTEGER CHECK (rating BETWEEN 1 AND 5),
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE (group_id, user_id)
                 )
             """)
 
@@ -385,6 +468,15 @@ def init_databases():
                     voted_at TIMESTAMP DEFAULT NOW(),
                     is_premium BOOLEAN DEFAULT FALSE,
                     PRIMARY KEY (user_id, group_id)
+                )
+            """)
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS button_ads (
+                    id SERIAL PRIMARY KEY,
+                    ad_text TEXT NOT NULL,
+                    ad_url TEXT NOT NULL,
+                    expires_at TIMESTAMPTZ NOT NULL
                 )
             """)
 
@@ -792,5 +884,4 @@ def save_reaction(message_id: int, username: str) -> bool:
 # ========================
 if __name__ == "__main__":
     init_databases()
-
     print("Databases initialized in Supabase PostgreSQL database.")
