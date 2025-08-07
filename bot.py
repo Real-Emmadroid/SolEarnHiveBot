@@ -249,9 +249,9 @@ def get_group_language(chat_id):
 
 
 # Command Handlers
-START_TEXT = """🔥 Welcome to @YourClickBot 🔥
+START_TEXT = """🔥 Welcome to @SolEarnHiveBot 🔥
 
-⚠️ *WARNING:* If this bot is not listed on @yourupdatechannel, it's likely a scam.
+⚠️ *WARNING:* If this bot is not listed on @SolEarnHiveUpdates, it's likely a scam.
 
 This bot lets you earn TRX by completing simple tasks:
 🖥️ Visit sites to earn
@@ -286,7 +286,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=ReplyKeyboardMarkup(REPLY_KEYBOARD, resize_keyboard=True)
     )
 
-FORCE_JOIN_CHANNEL = "@YourMainChannel"
+FORCE_JOIN_CHANNEL = "@SolEarnHiveUpdates"
 
 async def is_user_joined_channel(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
     try:
@@ -4676,12 +4676,12 @@ def main():
     application.add_handler(MessageHandler(filters.ALL, track_chats))
     
     # Add callback handlers
+    application.add_handler(CallbackQueryHandler(check_joined_callback, pattern="check_joined"))
     application.add_handler(CallbackQueryHandler(callback_query_handler))
     application.add_handler(CallbackQueryHandler(password_button_callback, pattern='^enter_password$'))
     application.add_handler(CallbackQueryHandler(cancel_password, pattern="^cancel_password$"))
     application.add_handler(CallbackQueryHandler(lambda u, c: u.callback_query.answer("❌ Button expired or invalid.")))
-    application.add_handler(CallbackQueryHandler(popup_callback, pattern=r"^popup_(yes|no)_[\d\-]+$"))
-    application.add_handler(CallbackQueryHandler(check_joined_callback, pattern="check_joined"))
+    
 
 
 
@@ -4698,6 +4698,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
