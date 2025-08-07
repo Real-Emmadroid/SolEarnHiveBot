@@ -249,89 +249,71 @@ def get_group_language(chat_id):
 
 
 # Command Handlers
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+START_TEXT = """🔥 Welcome to @YourClickBot 🔥
 
-    # ✅ Track only private chat users for DM broadcast
-    if update.effective_chat.type == "private":
-        user_id = update.effective_user.id
-        try:
-            with get_db_connection() as conn:
-                with conn.cursor() as cursor:
-                    cursor.execute('''
-                        CREATE TABLE IF NOT EXISTS broadcast_users (
-                            user_id BIGINT PRIMARY KEY
-                        )
-                    ''')
-                    cursor.execute('''
-                        INSERT INTO broadcast_users (user_id)
-                        VALUES (%s)
-                        ON CONFLICT(user_id) DO NOTHING
-                    ''', (user_id,))
-                    conn.commit()
-                    logger.info(f"✅ Tracked user {user_id} for broadcast.")
-        except Exception as e:
-            logger.error(f"❌ Failed to track user {user_id}: {e}")
+⚠️ *WARNING:* If this bot is not listed on @yourupdatechannel, it's likely a scam.
 
-    # Handle boostvote deep link
-    if context.args and context.args[0] == "boostvote":
-        return await boost_vote(update, context)
-    # Handle vote deep link
-    elif context.args and context.args[0].startswith('poll_'):
-        group_id = int(context.args[0].split('_')[1])
-        return await handle_vote_cast(update, context, group_id)
+This bot lets you earn TRX by completing simple tasks:
+🖥️ Visit sites to earn
+🤖 Message bots to earn
+📣 Join chats to earn
+👁️ Watch ads to earn
 
-    # Handle proj vote deep link
-    elif context.args and context.args[0].startswith('vote_'):
-        group_id = int(context.args[0].split('_')[1])
-        return await handle_projvote_cast(update, context, group_id)
+You can also create ads with /newad
 
-    # Deep link: /start register_raider
-    elif context.args and context.args[0] == "register_raider":
-        await update.message.reply_text(
-            "🤖 Alright! Let's register you here on the bot.\n\n"
-            "Please use the command:\n"
-            "`/register_raider <team_name> <twitter_username>`\n\n"
-            "Example:\n`/register_raider Dream Team @crypto_warrior`",
-            parse_mode="Markdown"
-        )
+Use /help and read FAQ for more info.
+"""
+
+REPLY_KEYBOARD = [
+    ["🤖 Message Bots", "🖥 Visit Sites"],
+    ["📣 Join Chats", "👁 Watch Ads"],
+    ["💰 Balance", "🙌 Referrals", "⚙ Settings"],
+    ["📊 My Ads"]
+]
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    chat_id = update.effective_chat.id
+    
+    # Force join check
+    if not await is_user_joined_channel(context, user.id):
+        await prompt_force_join(update, context)
         return
-
-    # /start review (redirected from group)
-    elif context.args and context.args[0] == "review":
-        return await start_review(update, context)
-
-    # /start hypeme (redirected from group)
-    elif context.args and context.args[0] == "add":
-        return await hypeme(update, context)
-
-    # Inline keyboard buttons
-    keyboard = [
-        [InlineKeyboardButton("➕ ADD ME TO YOUR COMMUNITY", url=f"https://t.me/{context.bot.username}?startgroup=true")], 
-        [InlineKeyboardButton("🚀 Gain hype for your Project", url=f"https://t.me/{context.bot.username}?start=add")],
-        [InlineKeyboardButton("⚪ Apply as a Raider or Shill team", url="https://stftrending.github.io/tg/shill.html")],
-        [InlineKeyboardButton("📖 Documentation", url="https://stf-2.gitbook.io/stftrending-docs")],
-        [InlineKeyboardButton("🔥 Fast Trending", url=f"https://t.me/{context.bot.username}?start=boosttrend")],
-        [InlineKeyboardButton("🗳️ Boost your Votes", url=f"https://t.me/{context.bot.username}?start=boostvote")],
-        [InlineKeyboardButton("🧿 MultiChain DEX", url=f"https://t.me/stfinfoportal/235")],
-        [InlineKeyboardButton("ℹ️ Tutorials and Info", url=f"https://t.me/stfinfoportal/9")],
-        [InlineKeyboardButton("🟢 Verified Shill Teams", url=f"https://t.me/stftrending/11")],
-        [InlineKeyboardButton("ℹ️ Submit reviews ", url=f"https://t.me/{context.bot.username}?start=review")],
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    # Send photo with caption and inline buttons
-    await context.bot.send_photo(
-        chat_id=update.effective_chat.id,
-        photo="https://t.me/myhostinger/26",  # Replace with actual image URL
-        caption=(
-            "🌟 *Welcome to STF TRENDING!*\n\n"
-            "I am your all-in-one tool for managing powerful Web3 shill trendings\n\n"
-            "➡ Join in @stftrending\n"
-            "Use /help to read more 🚀"
-        ),
+    
+    await update.message.reply_text(
+        text=START_TEXT,
         parse_mode="Markdown",
-        reply_markup=reply_markup
+        reply_markup=ReplyKeyboardMarkup(REPLY_KEYBOARD, resize_keyboard=True)
     )
+
+FORCE_JOIN_CHANNEL = "@YourMainChannel"
+
+async def is_user_joined_channel(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
+    try:
+        member = await context.bot.get_chat_member(FORCE_JOIN_CHANNEL, user_id)
+        return member.status in ["member", "creator", "administrator"]
+    except Exception as e:
+        return False
+
+async def prompt_force_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Join Channel", url=f"https://t.me/{FORCE_JOIN_CHANNEL.lstrip('@')}")],
+        [InlineKeyboardButton("🔄 I've Joined", callback_data="check_joined")]
+    ])
+    await update.message.reply_text(
+        "🚫 To use this bot, please join our channel first.",
+        reply_markup=keyboard
+    )
+
+async def check_joined_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = query.from_user.id
+
+    if await is_user_joined_channel(context, user_id):
+        await query.message.edit_text("✅ You're now verified. Send /start again.")
+    else:
+        await query.answer("❌ You haven't joined yet.", show_alert=True)
+
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -4699,6 +4681,7 @@ def main():
     application.add_handler(CallbackQueryHandler(cancel_password, pattern="^cancel_password$"))
     application.add_handler(CallbackQueryHandler(lambda u, c: u.callback_query.answer("❌ Button expired or invalid.")))
     application.add_handler(CallbackQueryHandler(popup_callback, pattern=r"^popup_(yes|no)_[\d\-]+$"))
+    application.add_handler(CallbackQueryHandler(check_joined_callback, pattern="check_joined"))
 
 
 
@@ -4715,6 +4698,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
