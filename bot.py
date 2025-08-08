@@ -16,7 +16,7 @@ import time, hmac, hashlib
 import pytz
 from pytz import timezone as pytz_timezone  # to handle 'Africa/Lagos'
 from flask import Flask
-from coinpayments import api_call
+from coinpayments import CoinPaymentsAPI
 from telegram.helpers import escape_markdown
 from functools import lru_cache
 from io import BytesIO
@@ -39,27 +39,27 @@ BOT_USERNAME = "solearnhivebot"
 MIN_WITHDRAW = 0.1  # Minimum allowed
 UTC = pytz.utc
 COINPAYMENTS_API_URL = "https://www.coinpayments.net/api.php"
-PUBLIC_KEY = "97189cb2811dc275b1512b6a6e670d7a2fb5e0bb8d325466006d6a30a9320670"
-PRIVATE_KEY = "b0a865a0aFCdeEf0c6ba8c26c6dF781510A5B2C3FE0ce2D45f4957aB48167957"
+API_PUBLIC_KEY = "97189cb2811dc275b1512b6a6e670d7a2fb5e0bb8d325466006d6a30a9320670"
+API_PRIVATE_KEY = "b0a865a0aFCdeEf0c6ba8c26c6dF781510A5B2C3FE0ce2D45f4957aB48167957"
 
-def api_call(cmd, params={}):
-    payload = {
+def coinpayments_api_call(cmd, params={}):
+    params.update({
         'version': 1,
-        'key': PUBLIC_KEY,
         'cmd': cmd,
-        'format': 'json',
-        **params
-    }
-    encoded = requests.compat.urlencode(payload).encode()
-    hmac_sig = hmac.new(PRIVATE_KEY.encode(), encoded, hashlib.sha512).hexdigest()
+        'key': API_PUBLIC_KEY,
+        'format': 'json'
+    })
+
+    post_data = '&'.join([f'{k}={v}' for k, v in params.items()])
+    hmac_sig = hmac.new(API_PRIVATE_KEY.encode(), post_data.encode(), hashlib.sha512).hexdigest()
 
     headers = {
         'HMAC': hmac_sig,
         'Content-Type': 'application/x-www-form-urlencoded'
     }
 
-    r = requests.post(COINPAYMENTS_API_URL, data=encoded, headers=headers)
-    return r.json()
+    response = requests.post('https://www.coinpayments.net/api.php', data=params, headers=headers)
+    return response.json()
 
 
 # Rate limiting storage
@@ -301,10 +301,8 @@ async def handle_convert(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_deposit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    pool = context.bot_data['db']
 
-    # Check if already generated
-    existing_address = await get_deposit_address(pool, user_id)
+    existing_address = get_deposit_address(user_id)
     if existing_address:
         await update.message.reply_text(
             f"📥 Deposit SOL to:\n`{existing_address}`\n\nFunds will reflect after confirmation.",
@@ -312,14 +310,13 @@ async def handle_deposit(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # Generate new address via CoinPayments
     result = api_call("get_callback_address", {
         "currency": "SOL"
     })
 
     if result['error'] == 'ok':
         address = result['result']['address']
-        await set_deposit_address(pool, user_id, address)
+        set_deposit_address(user_id, address)
 
         await update.message.reply_text(
             f"📥 Deposit SOL to:\n`{address}`\n\nFunds will reflect after confirmation.",
@@ -331,9 +328,8 @@ async def handle_deposit(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    pool = context.bot_data['db']
-
     args = update.message.text.split()
+
     if len(args) != 3:
         await update.message.reply_text("Usage: /withdraw <amount> <wallet_address>")
         return
@@ -345,7 +341,7 @@ async def handle_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Invalid amount or address.")
         return
 
-    user = await get_user(pool, user_id)
+    user = get_user(user_id)
     payout = float(user['payout_balance'])
 
     if amount < MIN_WITHDRAW:
@@ -356,7 +352,6 @@ async def handle_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Insufficient payout balance.")
         return
 
-    # Call CoinPayments API
     result = api_call("create_withdrawal", {
         "amount": str(amount),
         "currency": "SOL",
@@ -364,10 +359,11 @@ async def handle_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
     })
 
     if result['error'] == "ok":
-        await update_balances(pool, user_id, payout=payout - amount)
+        update_balances(user_id, payout=payout - amount)
         await update.message.reply_text(f"✅ Withdrawal of {amount} SOL sent to {address}")
     else:
         await update.message.reply_text("❌ Withdrawal failed: " + result['error'])
+
         
 
 async def ultstat(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -661,6 +657,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
