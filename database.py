@@ -85,6 +85,33 @@ def get_deposit_address(user_id: int) -> str:
             cursor.execute("SELECT deposit_address FROM clickbotusers WHERE id = %s", (user_id,))
             result = cursor.fetchone()
             return result[0] if result else None
+
+def convert_earnings_to_general(user_id: int) -> tuple[bool, float]:
+    with get_db_connection() as conn:
+        with conn.cursor() as cursor:
+            # Fetch current balances
+            cursor.execute("SELECT general_balance, payout_balance FROM clickbotusers WHERE id = %s", (user_id,))
+            row = cursor.fetchone()
+
+            if not row:
+                return False, 0.0
+
+            general, payout = float(row[0]), float(row[1])
+
+            if payout <= 0:
+                return False, 0.0
+
+            # Perform conversion
+            new_general = general + payout
+            cursor.execute("""
+                UPDATE clickbotusers 
+                SET general_balance = %s, payout_balance = 0 
+                WHERE id = %s
+            """, (new_general, user_id))
+            conn.commit()
+            return True, payout
+
+
             
 def with_retry(max_attempts=3, delay=0.5):
     """Decorator for retrying database operations."""
@@ -111,4 +138,5 @@ def with_retry(max_attempts=3, delay=0.5):
 if __name__ == "__main__":
     init_databases()
     print("Databases initialized in Supabase PostgreSQL database.")
+
 
