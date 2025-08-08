@@ -38,60 +38,31 @@ CREATOR_ID = 7112609512  # Replace with your actual Telegram user ID
 BOT_USERNAME = "solearnhivebot"
 MIN_WITHDRAW = 0.1  # Minimum allowed
 UTC = pytz.utc
-COINPAYMENTS_API_URL = "https://www.coinpayments.net/api.php"
+NOWPAYMENTS_API_KEY = "5RRXFWG-7ZY41Q9-P19J9DZ-Q3QSZJM"
 IPN_SECRET = "emm_supersecret123!"
 COINPAYMENTS_PUBLIC_KEY = "97189cb2811dc275b1512b6a6e670d7a2fb5e0bb8d325466006d6a30a9320670"
 COINPAYMENTS_PRIVATE_KEY = "b0a865a0aFCdeEf0c6ba8c26c6dF781510A5B2C3FE0ce2D45f4957aB48167957"
 app = Flask(__name__)
 
-def coinpayments_api_call(cmd, params=None):
-    from urllib.parse import urlencode
-
-    if params is None:
-        params = {}
-
-    params['version'] = 1
-    params['cmd'] = cmd
-    params['key'] = COINPAYMENTS_PUBLIC_KEY
-    params['format'] = 'json'
-
-    post_data = urlencode(params)
-    hmac_signature = hmac.new(
-        COINPAYMENTS_PRIVATE_KEY.encode(),
-        post_data.encode(),
-        hashlib.sha512
-    ).hexdigest()
-
-    headers = {
-        'HMAC': hmac_signature,
-        'Content-Type': 'application/x-www-form-urlencoded'
-    }
-
-    response = requests.post('https://www.coinpayments.net/api.php', data=post_data, headers=headers)
-    return response.json()
-
-COINPAYMENTS_API_URL = "https://www.coinpayments.net/api.php"
-PUBLIC_KEY = "97189cb2811dc275b1512b6a6e670d7a2fb5e0bb8d325466006d6a30a9320670"
-PRIVATE_KEY = "b0a865a0aFCdeEf0c6ba8c26c6dF781510A5B2C3FE0ce2D45f4957aB48167957"
-
-def api_call(cmd, params={}):
+def create_payment(user_id, amount, currency='sol'):
+    url = "https://api.nowpayments.io/v1/invoice"
+    
     payload = {
-        'version': 1,
-        'key': PUBLIC_KEY,
-        'cmd': cmd,
-        'format': 'json',
-        **params
+        "price_amount": amount,
+        "price_currency": currency,
+        "pay_currency": currency,
+        "order_id": f"user_{user_id}",
+        "order_description": "SOL Deposit to Bot",
+        "ipn_callback_url": "https://solearnhivebot.onrender.com/ipn"
     }
-    encoded = requests.compat.urlencode(payload).encode()
-    hmac_sig = hmac.new(PRIVATE_KEY.encode(), encoded, hashlib.sha512).hexdigest()
 
     headers = {
-        'HMAC': hmac_sig,
-        'Content-Type': 'application/x-www-form-urlencoded'
+        "x-api-key": NOWPAYMENTS_API_KEY,
+        "Content-Type": "application/json"
     }
 
-    r = requests.post(COINPAYMENTS_API_URL, data=encoded, headers=headers)
-    return r.json()
+    response = requests.post(url, json=payload, headers=headers)
+    return response.json()
 
 # Rate limiting storage
 user_last_request = {}
@@ -113,28 +84,20 @@ init_databases()
 
     
 @app.route('/ipn', methods=['POST'])
-def ipn():
-    ipn_data = request.form.to_dict()
-    hmac_header = request.headers.get('HMAC')
+def ipn_listener():
+    data = request.json
+    print("NOWPayments IPN Received:", data)
 
-    # Validate the HMAC signature
-    post_data = request.get_data()
-    calculated_hmac = hmac.new(IPN_SECRET.encode(), post_data, hashlib.sha512).hexdigest()
+    if data.get("payment_status") == "confirmed":
+        order_id = data.get("order_id")  # This will be "user_123456"
+        user_id = int(order_id.replace("user_", ""))
+        amount = float(data.get("actually_paid", 0))
+        currency = data.get("pay_currency")
 
-    if hmac_header != calculated_hmac:
-        return "Invalid HMAC signature", 400
+        # TODO: Credit user's general_balance in DB
+        print(f"✅ Deposit confirmed for user {user_id}: {amount} {currency}")
 
-    # Process the IPN data
-    status = ipn_data.get('status')  # Status code of the payment
-    txn_id = ipn_data.get('txn_id')
-    currency = ipn_data.get('currency')
-    amount = ipn_data.get('amount1')
-    address = ipn_data.get('address')
-
-    # Do your processing here (e.g., update database, notify user, etc.)
-    print(f"IPN received: Status={status}, Amount={amount} {currency}, To Address={address}, TXN ID={txn_id}")
-
-    return 'IPN OK', 200
+    return "OK", 200
 
 # Check if user is admin
 async def is_admin(chat_id: int, user_id: int, bot) -> bool:
@@ -354,44 +317,17 @@ async def handle_convert(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_deposit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    amount = 1  # or allow user to pick an amount
 
-    # Check for existing deposit address
-    existing_address = get_deposit_address(user_id)
-    if existing_address:
-        await update.message.reply_text(
-            f"📥 Deposit SOL to:\n`{existing_address}`\n\nFunds will reflect after confirmation.",
-            parse_mode="Markdown"
-        )
-        return
+    result = create_payment(user_id, amount)
 
-    # Try to generate a new deposit address
-    address = generate_sol_deposit_address(user_id)
-    if address:
-        set_deposit_address(user_id, address)
+    if result.get("invoice_url"):
         await update.message.reply_text(
-            f"📥 Deposit SOL to:\n`{address}`\n\nFunds will reflect after confirmation.",
-            parse_mode="Markdown"
+            f"💰 Click the link below to make your SOL deposit:\n\n{result['invoice_url']}"
         )
     else:
-        await update.message.reply_text("❌ Error generating deposit address. Please try again later.")
+        await update.message.reply_text("❌ Failed to generate deposit link. Try again later.")
 
-
-
-def generate_sol_deposit_address(user_id):
-    try:
-        result = coinpayments_api_call('get_callback_address', {
-            'currency': 'SOL',
-            'label': f"user_{user_id}"
-        })
-
-        if result.get('error') == 'ok':
-            return result['result']['address']
-        else:
-            print("CoinPayments error:", result.get('error'))
-            return None
-    except Exception as e:
-        print("Exception:", e)
-        return None
 
 
 async def handle_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -410,27 +346,40 @@ async def handle_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     user = get_user(user_id)
-    payout = float(user['payout_balance'])
+    payout_balance = float(user['payout_balance'])
 
     if amount < MIN_WITHDRAW:
         await update.message.reply_text(f"❌ Minimum withdraw is {MIN_WITHDRAW} SOL")
         return
 
-    if amount > payout:
+    if amount > payout_balance:
         await update.message.reply_text("❌ Insufficient payout balance.")
         return
 
-    result = coinpayments_api_call("create_withdrawal", {
-        "amount": str(amount),
-        "currency": "SOL",
-        "address": address
-    })
+    # Deduct balance
+    new_balance = payout_balance - amount
+    update_balances(user_id, payout=new_balance)
 
-    if result['error'] == "ok":
-        update_balances(user_id, payout=payout - amount)
-        await update.message.reply_text(f"✅ Withdrawal of {amount} SOL sent to {address}")
-    else:
-        await update.message.reply_text("❌ Withdrawal failed: " + result['error'])
+    # Save withdrawal request
+    with get_db_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                INSERT INTO withdrawals (user_id, amount, address, status)
+                VALUES (%s, %s, %s, %s)
+            """, (user_id, amount, address, 'pending'))
+            conn.commit()
+
+    await update.message.reply_text(
+        f"✅ Withdrawal request submitted:\n💸 *{amount:.6f} SOL* to `{address}`\n\n⏳ Awaiting manual processing.",
+        parse_mode="Markdown"
+    )
+
+    # Optional: notify admin
+    admin_chat_id = YOUR_ADMIN_CHAT_ID  # Replace
+    await context.bot.send_message(
+        chat_id=admin_chat_id,
+        text=f"🔔 New withdrawal request\nUser ID: {user_id}\nAmount: {amount} SOL\nAddress: {address}"
+    )
 
         
 
@@ -726,6 +675,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
