@@ -27,21 +27,14 @@ from telegram.ext import ApplicationBuilder, Application, CommandHandler, Conver
 from telegram.constants import ChatAction, ChatMemberStatus, ParseMode, MessageEntityType
 from database import init_databases
 from database import (
-    get_db_connection, register_raider, save_reaction, update_premium_statuses, get_status_template, add_raid_template, is_premium_user, get_premium_status, redeem_password, add_premium_password
+    get_db_connection
 )
 
 # Configuration
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
 CREATOR_ID = 7112609512  # Replace with your actual Telegram user ID
-FOLLOWER_PRICE = 0.02  # Per 1 follower (Dollar)
-BANK_DETAILS = "SOL: BXPq18Cy9naEpk6A7ChDePS1R2bnWVNtxWcGsJP6apuY\nUSDT (Trc20): TL287Wo3sc8MM8uTvE6ksV3hMxMyHcnSdR"
-TRENDING_CHANNEL_ID = -1002763078436
-TRENDING_FORUM_ID = -1002763078436   # Replace with your group/forum ID
-TRENDING_TOPIC_ID = 2            # Replace with your topic's message_thread_id
-TRENDING11 = 11
-TRENDING12 = 12
-BOT_USERNAME = "sfttrendingbot"
+BOT_USERNAME = "solearnhivebot"
 UTC = pytz.utc
 
 
@@ -271,6 +264,13 @@ async def ultstat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"⚠️ Error fetching statistics:\n<code>{e}</code>", parse_mode="HTML")
         
+async def error_handler(update: Update, context: CallbackContext):
+    error = context.error
+    if update and update.message:
+        await update.message.reply_text(f"⚠️ Error: {str(error)}")
+    else:
+        print(f"Unhandled error: {error}")
+
 
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Send an exact copy of the replied message (text/media) to all registered chats."""
@@ -503,6 +503,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
