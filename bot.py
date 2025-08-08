@@ -44,26 +44,29 @@ COINPAYMENTS_PUBLIC_KEY = "97189cb2811dc275b1512b6a6e670d7a2fb5e0bb8d325466006d6
 COINPAYMENTS_PRIVATE_KEY = "b0a865a0aFCdeEf0c6ba8c26c6dF781510A5B2C3FE0ce2D45f4957aB48167957"
 app = Flask(__name__)
 
-def create_payment(user_id, amount_in_sol):
+def create_payment(user_id, amount_sol):
     url = "https://api.nowpayments.io/v1/invoice"
-
-    payload = {
-        "price_amount": amount_in_sol,
-        "price_currency": "sol",      # Amount user intends to deposit in SOL
-        "pay_currency": "any",        # User can pay with any crypto
-        "order_id": f"user_{user_id}",
-        "order_description": "Deposit to bot",
-        "ipn_callback_url": "https://yourrenderapp.onrender.com/ipn"  # Set to your correct URL
-    }
-
     headers = {
         "x-api-key": NOWPAYMENTS_API_KEY,
         "Content-Type": "application/json"
     }
 
-    response = requests.post(url, json=payload, headers=headers)
-    return response.json()
+    data = {
+        "price_amount": amount_sol,
+        "price_currency": "SOL",         # Amount in SOL
+        "pay_currency": "any",           # Allow any coin as input
+        "order_id": f"user_{user_id}",
+        "order_description": f"Deposit for user {user_id}",
+        # Optional: "ipn_callback_url": "https://yourdomain.com/ipn"
+    }
 
+    try:
+        response = requests.post(url, json=data, headers=headers)
+        response.raise_for_status()
+        return response.json()
+    except Exception as e:
+        print(f"[NOWPayments Error]: {e}")
+        return {}
 
 # Rate limiting storage
 user_last_request = {}
@@ -326,6 +329,7 @@ async def handle_convert(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 ASK_DEPOSIT_AMOUNT = 1
+
 async def start_deposit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "💸 How much SOL would you like to deposit?\n\nPlease enter the amount (e.g., `2.5`):",
@@ -357,6 +361,7 @@ async def process_deposit_amount(update: Update, context: ContextTypes.DEFAULT_T
         await update.message.reply_text("❌ Failed to generate deposit link. Try again later.")
 
     return ConversationHandler.END
+
 
 async def cancel_deposit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("❌ Deposit process canceled.")
@@ -683,13 +688,14 @@ def main():
     application = ApplicationBuilder().token(TOKEN).build()
     application.add_error_handler(error_handler)
 
-    application.add_handler(ConversationHandler(
-        entry_points=[CommandHandler("start_deposit", start_deposit)],
+    deposit_conv = ConversationHandler(
+        entry_points=[MessageHandler(filters.Regex("^➕ Deposit$"), start_deposit)],
         states={
             ASK_DEPOSIT_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_deposit_amount)],
         },
         fallbacks=[CommandHandler("cancel", cancel_deposit)],
-    ))
+    )
+    application.add_handler(deposit_conv)
    
    
     # Add command handlers
@@ -717,6 +723,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
