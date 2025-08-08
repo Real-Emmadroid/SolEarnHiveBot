@@ -323,6 +323,7 @@ async def handle_convert(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_deposit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
+    # Check for existing deposit address
     existing_address = get_deposit_address(user_id)
     if existing_address:
         await update.message.reply_text(
@@ -331,20 +332,34 @@ async def handle_deposit(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    result = coinpayments_api_call("get_callback_address", {
-        "currency": "SOL"
-    })
-
-    if result['error'] == 'ok':
-        address = result['result']['address']
+    # Try to generate a new deposit address
+    address = generate_sol_deposit_address(user_id)
+    if address:
         set_deposit_address(user_id, address)
-
         await update.message.reply_text(
             f"📥 Deposit SOL to:\n`{address}`\n\nFunds will reflect after confirmation.",
             parse_mode="Markdown"
         )
     else:
-        await update.message.reply_text("❌ Error generating deposit address.")
+        await update.message.reply_text("❌ Error generating deposit address. Please try again later.")
+
+
+
+def generate_sol_deposit_address(user_id):
+    try:
+        result = coinpayments_api_call('get_callback_address', {
+            'currency': 'SOL',
+            'label': f"user_{user_id}"
+        })
+
+        if result.get('error') == 'ok':
+            return result['result']['address']
+        else:
+            print("CoinPayments error:", result.get('error'))
+            return None
+    except Exception as e:
+        print("Exception:", e)
+        return None
 
 
 async def handle_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -678,6 +693,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
