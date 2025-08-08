@@ -42,6 +42,7 @@ COINPAYMENTS_API_URL = "https://www.coinpayments.net/api.php"
 IPN_SECRET = "emm_supersecret123!"
 API_PUBLIC_KEY = "97189cb2811dc275b1512b6a6e670d7a2fb5e0bb8d325466006d6a30a9320670"
 API_PRIVATE_KEY = "b0a865a0aFCdeEf0c6ba8c26c6dF781510A5B2C3FE0ce2D45f4957aB48167957"
+app = Flask(__name__)
 
 def coinpayments_api_call(cmd, params={}):
     params.update({
@@ -103,7 +104,6 @@ def get_db_connection():
 # Initialize databases
 init_databases()
 
-app = Flask(__name__)
     
 @app.route('/ipn', methods=['POST'])
 def ipn():
@@ -719,6 +719,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
