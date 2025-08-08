@@ -331,7 +331,7 @@ async def handle_deposit(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    result = api_call("get_callback_address", {
+    result = coinpayments_api_call("get_callback_address", {
         "currency": "SOL"
     })
 
@@ -373,7 +373,7 @@ async def handle_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Insufficient payout balance.")
         return
 
-    result = api_call("create_withdrawal", {
+    result = coinpayments_api_call("create_withdrawal", {
         "amount": str(amount),
         "currency": "SOL",
         "address": address
@@ -678,6 +678,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
