@@ -102,6 +102,8 @@ def get_db_connection():
 
 # Initialize databases
 init_databases()
+
+app = Flask(__name__)
     
 @app.route('/ipn', methods=['POST'])
 def ipn():
@@ -717,6 +719,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
