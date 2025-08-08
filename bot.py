@@ -39,6 +39,7 @@ BOT_USERNAME = "solearnhivebot"
 MIN_WITHDRAW = 0.1  # Minimum allowed
 UTC = pytz.utc
 COINPAYMENTS_API_URL = "https://www.coinpayments.net/api.php"
+IPN_SECRET = "emm_supersecret123!"
 API_PUBLIC_KEY = "97189cb2811dc275b1512b6a6e670d7a2fb5e0bb8d325466006d6a30a9320670"
 API_PRIVATE_KEY = "b0a865a0aFCdeEf0c6ba8c26c6dF781510A5B2C3FE0ce2D45f4957aB48167957"
 
@@ -102,7 +103,29 @@ def get_db_connection():
 # Initialize databases
 init_databases()
     
+@app.route('/ipn', methods=['POST'])
+def ipn():
+    ipn_data = request.form.to_dict()
+    hmac_header = request.headers.get('HMAC')
 
+    # Validate the HMAC signature
+    post_data = request.get_data()
+    calculated_hmac = hmac.new(IPN_SECRET.encode(), post_data, hashlib.sha512).hexdigest()
+
+    if hmac_header != calculated_hmac:
+        return "Invalid HMAC signature", 400
+
+    # Process the IPN data
+    status = ipn_data.get('status')  # Status code of the payment
+    txn_id = ipn_data.get('txn_id')
+    currency = ipn_data.get('currency')
+    amount = ipn_data.get('amount1')
+    address = ipn_data.get('address')
+
+    # Do your processing here (e.g., update database, notify user, etc.)
+    print(f"IPN received: Status={status}, Amount={amount} {currency}, To Address={address}, TXN ID={txn_id}")
+
+    return 'IPN OK', 200
 
 # Check if user is admin
 async def is_admin(chat_id: int, user_id: int, bot) -> bool:
@@ -651,6 +674,7 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Initialize Flask
 app = Flask(__name__)
 
+
 @app.route('/')
 def home():
     return "Bot is running!"
@@ -693,6 +717,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
