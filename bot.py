@@ -44,16 +44,16 @@ COINPAYMENTS_PUBLIC_KEY = "97189cb2811dc275b1512b6a6e670d7a2fb5e0bb8d325466006d6
 COINPAYMENTS_PRIVATE_KEY = "b0a865a0aFCdeEf0c6ba8c26c6dF781510A5B2C3FE0ce2D45f4957aB48167957"
 app = Flask(__name__)
 
-def create_payment(user_id, amount, currency='sol'):
+def create_payment(user_id, amount_in_sol):
     url = "https://api.nowpayments.io/v1/invoice"
-    
+
     payload = {
-        "price_amount": amount,
-        "price_currency": currency,
-        "pay_currency": currency,
+        "price_amount": amount_in_sol,
+        "price_currency": "sol",      # Amount user intends to deposit in SOL
+        "pay_currency": "any",        # User can pay with any crypto
         "order_id": f"user_{user_id}",
-        "order_description": "SOL Deposit to Bot",
-        "ipn_callback_url": "https://solearnhivebot.onrender.com/ipn"
+        "order_description": "Deposit to bot",
+        "ipn_callback_url": "https://yourrenderapp.onrender.com/ipn"  # Set to your correct URL
     }
 
     headers = {
@@ -63,6 +63,7 @@ def create_payment(user_id, amount, currency='sol'):
 
     response = requests.post(url, json=payload, headers=headers)
     return response.json()
+
 
 # Rate limiting storage
 user_last_request = {}
@@ -86,18 +87,28 @@ init_databases()
 @app.route('/ipn', methods=['POST'])
 def ipn_listener():
     data = request.json
-    print("NOWPayments IPN Received:", data)
+    print("IPN Received:", data)
 
     if data.get("payment_status") == "confirmed":
-        order_id = data.get("order_id")  # This will be "user_123456"
+        order_id = data.get("order_id")  # "user_123456"
         user_id = int(order_id.replace("user_", ""))
-        amount = float(data.get("actually_paid", 0))
-        currency = data.get("pay_currency")
+        amount = float(data.get("actually_paid", 0))  # already in SOL if you set `price_currency=sol`
 
-        # TODO: Credit user's general_balance in DB
-        print(f"✅ Deposit confirmed for user {user_id}: {amount} {currency}")
+        with get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("""
+                    UPDATE clickbotusers
+                    SET general_balance = general_balance + %s
+                    WHERE id = %s
+                """, (amount, user_id))
+                conn.commit()
+
+        print(f"✅ Credited {amount:.6f} SOL to user {user_id}")
+    else:
+        print("⚠️ Payment not confirmed yet.")
 
     return "OK", 200
+
 
 # Check if user is admin
 async def is_admin(chat_id: int, user_id: int, bot) -> bool:
@@ -279,7 +290,7 @@ async def unified_message_handler(update: Update, context: ContextTypes.DEFAULT_
     user_id = update.effective_user.id
 
     if text == "➕ Deposit":
-        await handle_deposit(update, context)
+        await start_deposit(update, context)
 
     elif text == "💰 Balance":
         await balance_command (update, context)
@@ -314,19 +325,42 @@ async def handle_convert(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown"
         )
 
+ASK_DEPOSIT_AMOUNT = 1
+async def start_deposit(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "💸 How much SOL would you like to deposit?\n\nPlease enter the amount (e.g., `2.5`):",
+        parse_mode="Markdown"
+    )
+    return ASK_DEPOSIT_AMOUNT
 
-async def handle_deposit(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+async def process_deposit_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    amount = 1  # or allow user to pick an amount
+    text = update.message.text.strip()
+
+    try:
+        amount = float(text)
+        if amount <= 0:
+            raise ValueError
+    except ValueError:
+        await update.message.reply_text("❌ Please enter a valid amount greater than 0.")
+        return ASK_DEPOSIT_AMOUNT
 
     result = create_payment(user_id, amount)
 
     if result.get("invoice_url"):
         await update.message.reply_text(
-            f"💰 Click the link below to make your SOL deposit:\n\n{result['invoice_url']}"
+            f"💰 Click below to complete your deposit of *{amount:.6f} SOL* using any crypto:\n\n{result['invoice_url']}",
+            parse_mode="Markdown"
         )
     else:
         await update.message.reply_text("❌ Failed to generate deposit link. Try again later.")
+
+    return ConversationHandler.END
+
+async def cancel_deposit(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("❌ Deposit process canceled.")
+    return ConversationHandler.END
 
 
 
@@ -648,6 +682,14 @@ t.start()
 def main():
     application = ApplicationBuilder().token(TOKEN).build()
     application.add_error_handler(error_handler)
+
+    application.add_handler(ConversationHandler(
+        entry_points=[CommandHandler("start_deposit", start_deposit)],
+        states={
+            ASK_DEPOSIT_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_deposit_amount)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel_deposit)],
+    ))
    
    
     # Add command handlers
@@ -675,6 +717,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
