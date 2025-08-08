@@ -33,6 +33,17 @@ def init_databases():
                 );
             ''')
 
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS withdrawals (
+                    id SERIAL PRIMARY KEY,
+                    user_id BIGINT,
+                    amount NUMERIC,
+                    address TEXT,
+                    status TEXT DEFAULT 'pending',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            ''')
+
 
             cursor.execute('''
                 ALTER TABLE premium_users
@@ -138,5 +149,6 @@ def with_retry(max_attempts=3, delay=0.5):
 if __name__ == "__main__":
     init_databases()
     print("Databases initialized in Supabase PostgreSQL database.")
+
 
 
