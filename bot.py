@@ -61,6 +61,28 @@ def coinpayments_api_call(cmd, params={}):
     response = requests.post('https://www.coinpayments.net/api.php', data=params, headers=headers)
     return response.json()
 
+COINPAYMENTS_API_URL = "https://www.coinpayments.net/api.php"
+PUBLIC_KEY = "97189cb2811dc275b1512b6a6e670d7a2fb5e0bb8d325466006d6a30a9320670"
+PRIVATE_KEY = "b0a865a0aFCdeEf0c6ba8c26c6dF781510A5B2C3FE0ce2D45f4957aB48167957"
+
+def api_call(cmd, params={}):
+    payload = {
+        'version': 1,
+        'key': PUBLIC_KEY,
+        'cmd': cmd,
+        'format': 'json',
+        **params
+    }
+    encoded = requests.compat.urlencode(payload).encode()
+    hmac_sig = hmac.new(PRIVATE_KEY.encode(), encoded, hashlib.sha512).hexdigest()
+
+    headers = {
+        'HMAC': hmac_sig,
+        'Content-Type': 'application/x-www-form-urlencoded'
+    }
+
+    r = requests.post(COINPAYMENTS_API_URL, data=encoded, headers=headers)
+    return r.json()
 
 # Rate limiting storage
 user_last_request = {}
@@ -277,8 +299,7 @@ async def unified_message_handler(update: Update, context: ContextTypes.DEFAULT_
         await handle_convert(update, context)
 
     elif text == "🔙 Back":
-        await update.message.reply_text("🔙 Back to main menu", reply_markup=ReplyKeyboardMarkup([...], resize_keyboard=True))
-
+        await start(update, context)
     else:
         await update.message.reply_text("❓ Unrecognized option.")
 
@@ -657,6 +678,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
