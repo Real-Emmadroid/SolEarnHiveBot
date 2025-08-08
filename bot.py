@@ -369,6 +369,7 @@ async def cancel_deposit(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
+
 async def handle_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     args = update.message.text.split()
@@ -688,14 +689,14 @@ def main():
     application = ApplicationBuilder().token(TOKEN).build()
     application.add_error_handler(error_handler)
 
-    deposit_conv = ConversationHandler(
+    deposit_conv_handler = ConversationHandler(
         entry_points=[MessageHandler(filters.Regex("^➕ Deposit$"), start_deposit)],
         states={
-            ASK_DEPOSIT_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_deposit_amount)],
+            ASK_DEPOSIT_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_deposit_amount)]
         },
         fallbacks=[CommandHandler("cancel", cancel_deposit)],
     )
-    application.add_handler(deposit_conv)
+    application.add_handler(deposit_conv_handler)
    
    
     # Add command handlers
@@ -723,6 +724,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
