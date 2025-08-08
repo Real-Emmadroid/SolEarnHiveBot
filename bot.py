@@ -12,10 +12,11 @@ import psycopg
 from telegram.error import BadRequest, TelegramError
 import traceback
 import html
-import time
+import time, hmac, hashlib
 import pytz
 from pytz import timezone as pytz_timezone  # to handle 'Africa/Lagos'
 from flask import Flask
+from coinpayments import api_call
 from telegram.helpers import escape_markdown
 from functools import lru_cache
 from io import BytesIO
@@ -27,7 +28,7 @@ from telegram.ext import ApplicationBuilder, Application, CommandHandler, Conver
 from telegram.constants import ChatAction, ChatMemberStatus, ParseMode, MessageEntityType
 from database import init_databases
 from database import (
-    get_db_connection
+    get_db_connection, get_user, update_balances, set_deposit_address, get_deposit_address, convert_earnings_to_general
 )
 
 # Configuration
@@ -35,7 +36,30 @@ TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
 CREATOR_ID = 7112609512  # Replace with your actual Telegram user ID
 BOT_USERNAME = "solearnhivebot"
+MIN_WITHDRAW = 0.1  # Minimum allowed
 UTC = pytz.utc
+COINPAYMENTS_API_URL = "https://www.coinpayments.net/api.php"
+PUBLIC_KEY = "97189cb2811dc275b1512b6a6e670d7a2fb5e0bb8d325466006d6a30a9320670"
+PRIVATE_KEY = "b0a865a0aFCdeEf0c6ba8c26c6dF781510A5B2C3FE0ce2D45f4957aB48167957"
+
+def api_call(cmd, params={}):
+    payload = {
+        'version': 1,
+        'key': PUBLIC_KEY,
+        'cmd': cmd,
+        'format': 'json',
+        **params
+    }
+    encoded = requests.compat.urlencode(payload).encode()
+    hmac_sig = hmac.new(PRIVATE_KEY.encode(), encoded, hashlib.sha512).hexdigest()
+
+    headers = {
+        'HMAC': hmac_sig,
+        'Content-Type': 'application/x-www-form-urlencoded'
+    }
+
+    r = requests.post(COINPAYMENTS_API_URL, data=encoded, headers=headers)
+    return r.json()
 
 
 # Rate limiting storage
@@ -178,6 +202,33 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+BALANCE_MENU_KEYBOARD = ReplyKeyboardMarkup([
+    ["➕ Deposit", "➖ Withdraw"],
+    ["📜 History", "🔁 Convert"],
+    ["🔙 Back"]
+], resize_keyboard=True)
+
+async def balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    user = get_user(user_id)
+
+    general = float(user["general_balance"])
+    payout = float(user["payout_balance"])
+
+    message = (
+        f"💰 *Your Balance*\n\n"
+        f"• 🪙 *General Balance:* {general:.6f} SOL\n"
+        f"• 💸 *Available for Payout:* {payout:.6f} SOL\n\n"
+        f"Use the options below to manage your wallet."
+    )
+
+    await update.message.reply_text(
+        text=message,
+        parse_mode="Markdown",
+        reply_markup=BALANCE_MENU_KEYBOARD
+    )
+
+
 async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -207,11 +258,117 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
 
 
 async def unified_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    message = update.message
-    if not message or not message.text:
+    text = update.message.text
+    user_id = update.effective_user.id
+
+    if text == "➕ Deposit":
+        await handle_deposit(update, context)
+
+    elif text == "💰 Balance":
+        await balance_command (update, context)
+
+    elif text == "➖ Withdraw":
+        await handle_withdraw (update, context)
+
+    elif text == "📜 History":
+        await update.message.reply_text("🛠 Transaction history will show here.")
+
+    elif text == "🔁 Convert":
+        await handle_convert(update, context)
+
+    elif text == "🔙 Back":
+        await update.message.reply_text("🔙 Back to main menu", reply_markup=ReplyKeyboardMarkup([...], resize_keyboard=True))
+
+    else:
+        await update.message.reply_text("❓ Unrecognized option.")
+
+
+async def handle_convert(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    success, amount = convert_earnings_to_general(user_id)  # Not async now
+
+    if success:
+        await update.message.reply_text(
+            f"🔁 Converted *{amount:.6f} SOL* from `Available for Payout` to `General Balance` ✅",
+            parse_mode="Markdown"
+        )
+    else:
+        await update.message.reply_text(
+            "⚠️ Nothing to convert. Your payout balance is empty.",
+            parse_mode="Markdown"
+        )
+
+
+async def handle_deposit(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    pool = context.bot_data['db']
+
+    # Check if already generated
+    existing_address = await get_deposit_address(pool, user_id)
+    if existing_address:
+        await update.message.reply_text(
+            f"📥 Deposit SOL to:\n`{existing_address}`\n\nFunds will reflect after confirmation.",
+            parse_mode="Markdown"
+        )
         return
 
-    
+    # Generate new address via CoinPayments
+    result = api_call("get_callback_address", {
+        "currency": "SOL"
+    })
+
+    if result['error'] == 'ok':
+        address = result['result']['address']
+        await set_deposit_address(pool, user_id, address)
+
+        await update.message.reply_text(
+            f"📥 Deposit SOL to:\n`{address}`\n\nFunds will reflect after confirmation.",
+            parse_mode="Markdown"
+        )
+    else:
+        await update.message.reply_text("❌ Error generating deposit address.")
+
+
+async def handle_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    pool = context.bot_data['db']
+
+    args = update.message.text.split()
+    if len(args) != 3:
+        await update.message.reply_text("Usage: /withdraw <amount> <wallet_address>")
+        return
+
+    try:
+        amount = float(args[1])
+        address = args[2]
+    except:
+        await update.message.reply_text("❌ Invalid amount or address.")
+        return
+
+    user = await get_user(pool, user_id)
+    payout = float(user['payout_balance'])
+
+    if amount < MIN_WITHDRAW:
+        await update.message.reply_text(f"❌ Minimum withdraw is {MIN_WITHDRAW} SOL")
+        return
+
+    if amount > payout:
+        await update.message.reply_text("❌ Insufficient payout balance.")
+        return
+
+    # Call CoinPayments API
+    result = api_call("create_withdrawal", {
+        "amount": str(amount),
+        "currency": "SOL",
+        "address": address
+    })
+
+    if result['error'] == "ok":
+        await update_balances(pool, user_id, payout=payout - amount)
+        await update.message.reply_text(f"✅ Withdrawal of {amount} SOL sent to {address}")
+    else:
+        await update.message.reply_text("❌ Withdrawal failed: " + result['error'])
+        
 
 async def ultstat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != CREATOR_ID:
@@ -484,6 +641,8 @@ def main():
         ("start", start),
         ("help", help_command),
         ("broadcast", broadcast),
+        ("balance", balance_command),
+        ("withdraw", handle_withdraw),
         ("promo", broadcast_command),
     ]
     for command, handler in handlers:
@@ -491,7 +650,6 @@ def main():
 
     # Add message handlers
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, unified_message_handler))
-    application.add_handler(MessageHandler(filters.ALL, track_chats))
     
     # Add callback handlers
     application.add_handler(CallbackQueryHandler(callback_query_handler))
@@ -503,6 +661,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
