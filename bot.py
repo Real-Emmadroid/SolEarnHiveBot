@@ -40,27 +40,34 @@ MIN_WITHDRAW = 0.1  # Minimum allowed
 UTC = pytz.utc
 COINPAYMENTS_API_URL = "https://www.coinpayments.net/api.php"
 IPN_SECRET = "emm_supersecret123!"
-API_PUBLIC_KEY = "97189cb2811dc275b1512b6a6e670d7a2fb5e0bb8d325466006d6a30a9320670"
-API_PRIVATE_KEY = "b0a865a0aFCdeEf0c6ba8c26c6dF781510A5B2C3FE0ce2D45f4957aB48167957"
+COINPAYMENTS_PUBLIC_KEY = "97189cb2811dc275b1512b6a6e670d7a2fb5e0bb8d325466006d6a30a9320670"
+COINPAYMENTS_PRIVATE_KEY = "b0a865a0aFCdeEf0c6ba8c26c6dF781510A5B2C3FE0ce2D45f4957aB48167957"
 app = Flask(__name__)
 
-def coinpayments_api_call(cmd, params={}):
-    params.update({
-        'version': 1,
-        'cmd': cmd,
-        'key': API_PUBLIC_KEY,
-        'format': 'json'
-    })
+def coinpayments_api_call(cmd, params=None):
+    from urllib.parse import urlencode
 
-    post_data = '&'.join([f'{k}={v}' for k, v in params.items()])
-    hmac_sig = hmac.new(API_PRIVATE_KEY.encode(), post_data.encode(), hashlib.sha512).hexdigest()
+    if params is None:
+        params = {}
+
+    params['version'] = 1
+    params['cmd'] = cmd
+    params['key'] = COINPAYMENTS_PUBLIC_KEY
+    params['format'] = 'json'
+
+    post_data = urlencode(params)
+    hmac_signature = hmac.new(
+        COINPAYMENTS_PRIVATE_KEY.encode(),
+        post_data.encode(),
+        hashlib.sha512
+    ).hexdigest()
 
     headers = {
-        'HMAC': hmac_sig,
+        'HMAC': hmac_signature,
         'Content-Type': 'application/x-www-form-urlencoded'
     }
 
-    response = requests.post('https://www.coinpayments.net/api.php', data=params, headers=headers)
+    response = requests.post('https://www.coinpayments.net/api.php', data=post_data, headers=headers)
     return response.json()
 
 COINPAYMENTS_API_URL = "https://www.coinpayments.net/api.php"
@@ -719,6 +726,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
