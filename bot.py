@@ -6,6 +6,7 @@ import sqlite3
 import json
 import random
 import urllib.parse
+from urllib.parse import urlparse
 import asyncio
 import string
 import requests
@@ -1062,6 +1063,7 @@ async def bot_description_handler(update: Update, context: ContextTypes.DEFAULT_
     await update.message.reply_text(
         "What is the most you want to pay per click?\n\n"
         "Minimum Cost Per Click (CPC): 0.00006 SOL\n\n"
+        "Recommended: 0.00008-0.0001 SOL\n\n"
         "➡️ Enter a value in SOL:",
         reply_markup=ReplyKeyboardMarkup([["🔙 Back"]], resize_keyboard=True, one_time_keyboard=True),
     )
@@ -1113,9 +1115,9 @@ async def bot_budget_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text("Cancelled bot ad creation.", reply_markup=ReplyKeyboardRemove())
         return ConversationHandler.END
 
-    if budget_text == "➕ deposit":
-        await update.message.reply_text("Please deposit funds via /deposit command or through the bot website.")
-        return BOT_BUDGET
+    if budget_text == "➕ Deposit":
+        await start_deposit(update, context)
+        return ConversationHandler.END  # End current conversation
 
     try:
         budget = float(budget_text)
@@ -1177,10 +1179,10 @@ async def bot_budget_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
             conn.commit()
 
     message = (
-        f"⚙️ Campaign #{ad_id} - Bot promotion\n\n"
+        f"⚙️ Campaign #{ad_id} - 🤖 Bot promotion\n\n"
         f"✏️ Title: {context.user_data['bot_title']}\n"
         f"🗨 Description: {context.user_data['bot_description']}\n\n"
-        f"Bot: @{context.user_data['bot_username']}\n"
+        f"🤖 Bot: @{context.user_data['bot_username']}\n"
         f"🔗 URL: {context.user_data['bot_promo_link']}\n\n"
         f"Status: ▶️ Ongoing\n"
         f"CPC: {context.user_data['bot_cpc']:.8f} SOL\n"
@@ -1202,6 +1204,528 @@ async def bot_budget_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 async def bot_cancel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Send cancellation message
+    await update.message.reply_text("Operation cancelled.")
+    
+    # Return to main menu
+    await start(update, context)
+    return ConversationHandler.END
+
+
+POST_MSG, POST_CPC, POST_BUDGET = range(3)
+
+async def post_views_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [["🔙 Back"]]
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
+
+    await update.message.reply_text(
+        "🔎 Send or forward now here the message you want to promote.\n"
+        "Users will be paid to view the message for at least 10 seconds.",
+        reply_markup=reply_markup,
+    )
+    return POST_MSG
+
+async def post_views_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    message = update.message
+    reply_markup = ReplyKeyboardMarkup([["🔙 Back"]], resize_keyboard=True, one_time_keyboard=True)
+
+    # Check if message is forwarded
+    if not message.forward_origin:
+        await update.message.reply_text(
+            "‼️ Please forward a message to promote (don't just type it).",
+            reply_markup=reply_markup
+        )
+        return POST_MSG
+
+    # Get origin details based on forwarding type
+    origin = message.forward_origin
+    
+    if isinstance(origin, MessageOriginUser):
+        # Forwarded from a user
+        if not origin.sender_user.is_bot:
+            await update.message.reply_text(
+                "‼️ Please forward a message from a channel/group, not a personal chat.",
+                reply_markup=reply_markup
+            )
+            return POST_MSG
+        context.user_data["post_chat_id"] = origin.sender_user.id
+    elif isinstance(origin, MessageOriginChat):
+        # Forwarded from a chat
+        context.user_data["post_chat_id"] = origin.sender_chat.id
+    elif isinstance(origin, MessageOriginChannel):
+        # Forwarded from a channel
+        context.user_data["post_chat_id"] = origin.chat.id
+    else:
+        await update.message.reply_text(
+            "‼️ Unsupported message type. Please forward a regular message.",
+            reply_markup=reply_markup
+        )
+        return POST_MSG
+
+    # Save message ID
+    context.user_data["post_message_id"] = message.message_id
+
+    try:
+        # Re-forward message as preview
+        await context.bot.forward_message(
+            chat_id=update.effective_chat.id,
+            from_chat_id=context.user_data["post_chat_id"],
+            message_id=message.message_id
+        )
+    except Exception as e:
+        await update.message.reply_text(
+            f"❌ Could not process message: {str(e)}",
+            reply_markup=reply_markup
+        )
+        return POST_MSG
+
+    await update.message.reply_text(
+        "What is the most you want to pay per view?\n\n"
+        "Minimum Cost Per View (CPV): 0.00006 SOL\n\n"
+        "➡️ Enter a value in SOL:",
+        reply_markup=reply_markup
+    )
+    return POST_CPC
+
+async def post_views_cpc_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    cpc_text = update.message.text.strip()
+    reply_markup = ReplyKeyboardMarkup([["🔙 Back"]], resize_keyboard=True, one_time_keyboard=True)
+
+    if cpc_text.lower() == "🔙 back":
+        await update.message.reply_text(
+            "Cancelled post views ad creation.",
+            reply_markup=ReplyKeyboardMarkup(REPLY_KEYBOARD, resize_keyboard=True)
+        )
+        return ConversationHandler.END
+
+    try:
+        cpc = float(cpc_text)
+        if cpc < 0.00006:
+            raise ValueError("Below minimum")
+    except ValueError:
+        await update.message.reply_text(
+            "❌ Invalid value. Minimum is 0.00006 SOL. Please enter a valid amount:",
+            reply_markup=reply_markup
+        )
+        return POST_CPC
+
+    context.user_data["post_cpc"] = cpc
+
+    # Get user balance
+    user_id = update.effective_user.id
+    with get_db_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "SELECT general_balance FROM clickbotusers WHERE id = %s",
+                (user_id,)
+            )
+            balance = float(cursor.fetchone()[0] or 0)
+
+    context.user_data["user_balance"] = balance
+
+    await update.message.reply_text(
+        f"💰 Set Campaign Budget\n\n"
+        f"Available: {balance:.6f} SOL\n"
+        f"CPV: {cpc:.6f} SOL\n\n"
+        "Enter total amount to spend:",
+        reply_markup=ReplyKeyboardMarkup(
+            [["➕ Deposit", "🔙 Back"]],
+            resize_keyboard=True
+        )
+    )
+    return POST_BUDGET
+
+async def post_views_budget_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    budget_text = update.message.text.strip()
+    user_balance = context.user_data.get("user_balance", 0.0)
+    reply_markup = ReplyKeyboardMarkup(
+        [["➕ Deposit", "🔙 Back"]],
+        resize_keyboard=True
+    )
+
+    if budget_text.lower() == "🔙 back":
+        await update.message.reply_text(
+            "Cancelled post views ad creation.",
+            reply_markup=ReplyKeyboardMarkup(REPLY_KEYBOARD, resize_keyboard=True)
+        )
+        return ConversationHandler.END
+
+    if budget_text == "➕ Deposit":
+        await start_deposit(update, context)
+        return ConversationHandler.END
+
+    try:
+        budget = float(budget_text)
+        if budget > user_balance:
+            raise ValueError("Insufficient funds")
+        if budget < 0.0001:  # Minimum budget
+            raise ValueError("Below minimum budget")
+    except ValueError as e:
+        error_msg = {
+            "Insufficient funds": f"❌ Only {user_balance:.6f} SOL available",
+            "Below minimum budget": "❌ Minimum budget is 0.0001 SOL"
+        }.get(str(e), "❌ Invalid amount. Please enter a number")
+
+        await update.message.reply_text(
+            f"{error_msg}\n\nPlease enter a valid amount:",
+            reply_markup=reply_markup
+        )
+        return POST_BUDGET
+
+    # Save campaign to database
+    user_id = update.effective_user.id
+    ad_data = {
+        "chat_id": context.user_data["post_chat_id"],
+        "message_id": context.user_data["post_message_id"]
+    }
+
+    with get_db_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                INSERT INTO ads 
+                (user_id, ad_type, details, status, created_at, expires_at)
+                VALUES (%s, %s, %s, %s, NOW(), NOW() + INTERVAL '30 days')
+                RETURNING id
+            """, (
+                user_id,
+                "post_views",
+                json.dumps(ad_data),
+                "active"
+            ))
+            ad_id = cursor.fetchone()[0]
+
+            cursor.execute("""
+                INSERT INTO post_views_ads_details
+                (ad_id, cpc, budget, clicks, skipped)
+                VALUES (%s, %s, %s, 0, 0)
+            """, (
+                ad_id,
+                context.user_data["post_cpc"],
+                budget
+            ))
+
+            cursor.execute("""
+                UPDATE clickbotusers
+                SET general_balance = general_balance - %s
+                WHERE id = %s
+            """, (budget, user_id))
+
+            conn.commit()
+
+    # Build confirmation message
+    message = (
+        f"⚙️ Campaign #{ad_id} - 📃 Post views promotion\n\n"
+        f"🔗 URL: https://t.me/c/{str(context.user_data['post_chat_id'])[4:]}/{context.user_data['post_message_id']}\n\n"
+        f"Status: ▶️ Ongoing\n"
+        f"CPC: {context.user_data['post_cpc']:.8f} SOL\n"
+        f"Budget: {context.user_data['post_budget']:.8f} SOL\n"
+        f"Total Clicks: 0 clicks\n"
+        f"Skipped: 0 times\n\n"
+        "___________________________"
+    )
+
+    await update.message.reply_text(message, reply_markup=ReplyKeyboardRemove())
+
+    # Return to main menu or wherever you want
+    await start(update, context)
+    return ConversationHandler.END
+
+async def post_views_cancel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Operation cancelled.", reply_markup=ReplyKeyboardRemove())
+    await start(update, context)
+    return ConversationHandler.END
+
+
+# Define conversation states
+LINK_URL, LINK_TITLE, LINK_DESCRIPTION, LINK_CPC, LINK_BUDGET = range(5)
+
+def is_valid_url(url: str) -> bool:
+    """Enhanced URL validation with domain pattern checking"""
+    try:
+        result = urlparse(url)
+        if not all([result.scheme in ("http", "https"), result.netloc]):
+            return False
+            
+        # Basic domain pattern validation
+        domain_pattern = re.compile(
+            r'^([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$'
+        )
+        return bool(domain_pattern.match(result.netloc))
+    except Exception:
+        return False
+
+async def link_url_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Start link promotion with clear instructions"""
+    context.user_data.clear()  # Clear any previous data
+    
+    text = (
+        "🌐 <b>Link Promotion Setup</b>\n\n"
+        "🔗 Enter any valid URL to promote:\n"
+        "• Websites\n• Social Media\n• Videos\n• Products\n\n"
+        "<i>Example: https://example.com?ref=123</i>"
+    )
+    
+    await update.message.reply_text(
+        text,
+        parse_mode="HTML",
+        reply_markup=ReplyKeyboardMarkup([["🔙 Back"]], resize_keyboard=True)
+    )
+    return LINK_URL
+
+async def link_url_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Validate and store the promotion URL"""
+    text = update.message.text.strip()
+    
+    if text.lower() == "🔙 back":
+        await cancel_handler(update, context)
+        return ConversationHandler.END
+
+    if not is_valid_url(text):
+        error_msg = (
+            "❌ <b>Invalid URL Format</b>\n\n"
+            "Please enter a valid URL including:\n"
+            "• http:// or https:// prefix\n"
+            "• Proper domain name\n\n"
+            "<i>Example: https://example.com</i>"
+        )
+        await update.message.reply_text(
+            error_msg,
+            parse_mode="HTML",
+            reply_markup=ReplyKeyboardMarkup([["🔙 Back"]], resize_keyboard=True)
+        )
+        return LINK_URL
+
+    context.user_data["link_url"] = text
+    await update.message.reply_text(
+        "✏️ <b>Create an attractive title:</b>\n\n"
+        "<i>Example: Amazing Product - 50% Off Today!</i>",
+        parse_mode="HTML",
+        reply_markup=ReplyKeyboardMarkup([["🔙 Back"]], resize_keyboard=True)
+    )
+    return LINK_TITLE
+
+async def link_title_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Validate and store ad title"""
+    title = update.message.text.strip()
+    
+    if title.lower() == "🔙 back":
+        await cancel_handler(update, context)
+        return ConversationHandler.END
+
+    if len(title) < 5:
+        await update.message.reply_text(
+            "❌ Title too short (min 5 characters)\n"
+            "Please enter a compelling title:",
+            reply_markup=ReplyKeyboardMarkup([["🔙 Back"]], resize_keyboard=True)
+        )
+        return LINK_TITLE
+
+    context.user_data["link_title"] = title
+    await update.message.reply_text(
+        "📝 <b>Write a detailed description:</b>\n\n"
+        "<i>Example: Get our premium product at half price today only! "
+        "Limited time offer for first 100 customers.</i>",
+        parse_mode="HTML",
+        reply_markup=ReplyKeyboardMarkup([["🔙 Back"]], resize_keyboard=True)
+    )
+    return LINK_DESCRIPTION
+
+async def link_description_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Validate and store ad description"""
+    desc = update.message.text.strip()
+    
+    if desc.lower() == "🔙 back":
+        await cancel_handler(update, context)
+        return ConversationHandler.END
+
+    if len(desc) < 20:
+        await update.message.reply_text(
+            "❌ Description too short (min 20 characters)\n"
+            "Please enter a detailed description:",
+            reply_markup=ReplyKeyboardMarkup([["🔙 Back"]], resize_keyboard=True)
+        )
+        return LINK_DESCRIPTION
+
+    context.user_data["link_description"] = desc
+    
+    # Show CPC explanation with example
+    cpc_msg = (
+        "💰 <b>Set Your Cost-Per-Click (CPC)</b>\n\n"
+        "This is the max you'll pay when someone clicks your link\n\n"
+        "• Minimum: 0.00006 SOL\n"
+        "• Recommended: 0.0001-0.01 SOL\n\n"
+        "<i>Example entry: 0.001</i>"
+    )
+    
+    await update.message.reply_text(
+        cpc_msg,
+        parse_mode="HTML",
+        reply_markup=ReplyKeyboardMarkup([["🔙 Back"]], resize_keyboard=True)
+    )
+    return LINK_CPC
+
+async def link_cpc_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Validate and store CPC value"""
+    cpc_text = update.message.text.strip()
+    
+    if cpc_text.lower() == "🔙 back":
+        await cancel_handler(update, context)
+        return ConversationHandler.END
+
+    try:
+        cpc = float(cpc_text)
+        if cpc < 0.00006:
+            raise ValueError("Below minimum")
+    except ValueError:
+        await update.message.reply_text(
+            "❌ Invalid CPC value\n"
+            "Please enter a number ≥ 0.00006 SOL:",
+            reply_markup=ReplyKeyboardMarkup([["🔙 Back"]], resize_keyboard=True)
+        )
+        return LINK_CPC
+
+    context.user_data["link_cpc"] = cpc
+    
+    # Get user balance
+    user_id = update.effective_user.id
+    with get_db_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "SELECT general_balance FROM clickbotusers WHERE id = %s", 
+                (user_id,)
+            )
+            balance = float(cursor.fetchone()[0] or 0)
+
+    context.user_data["user_balance"] = balance
+    
+    budget_msg = (
+        "💵 <b>Set Campaign Budget</b>\n\n"
+        f"Available Balance: {balance:.6f} SOL\n\n"
+        "Enter total amount to spend:\n"
+        "<i>Example: 1.5 (for 1.5 SOL)</i>"
+    )
+    
+    await update.message.reply_text(
+        budget_msg,
+        parse_mode="HTML",
+        reply_markup=ReplyKeyboardMarkup(
+            [["➕ Deposit", "🔙 Back"]], 
+            resize_keyboard=True
+        )
+    )
+    return LINK_BUDGET
+
+async def link_budget_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Finalize campaign creation"""
+    text = update.message.text.strip()
+    user_id = update.effective_user.id
+    balance = context.user_data["user_balance"]
+
+    if text.lower() == "🔙 back":
+        await cancel_handler(update, context)
+        return ConversationHandler.END
+
+    if text == "➕ Deposit":
+        await start_deposit(update, context)
+        return ConversationHandler.END
+
+    try:
+        budget = float(text)
+        if budget > balance:
+            raise ValueError("Insufficient funds")
+        if budget < 0.001:
+            raise ValueError("Below minimum")
+    except ValueError as e:
+        error_msg = {
+            "Insufficient funds": (
+                f"❌ Only {balance:.6f} SOL available\n"
+                f"You requested: {text} SOL\n\n"
+                "Please deposit more or reduce budget"
+            ),
+            "Below minimum": "❌ Minimum budget is 0.001 SOL",
+        }.get(str(e), "❌ Invalid amount. Please enter a number")
+
+        await update.message.reply_text(
+            error_msg,
+            reply_markup=ReplyKeyboardMarkup(
+                [["➕ Deposit", "🔙 Back"]],
+                resize_keyboard=True
+            )
+        )
+        return LINK_BUDGET
+
+    # Save campaign to database
+    ad_data = {
+        "url": context.user_data["link_url"],
+        "title": context.user_data["link_title"],
+        "description": context.user_data["link_description"],
+        "cpc": context.user_data["link_cpc"],
+        "budget": budget
+    }
+
+    with get_db_connection() as conn:
+        with conn.cursor() as cursor:
+            # Create ad record
+            cursor.execute("""
+                INSERT INTO ads 
+                (user_id, ad_type, details, status, created_at, expires_at)
+                VALUES (%s, %s, %s, %s, NOW(), NOW() + INTERVAL '30 days')
+                RETURNING id
+            """, (
+                user_id,
+                "link_url",
+                json.dumps({"url": ad_data["url"]}),
+                "active"
+            ))
+            ad_id = cursor.fetchone()[0]
+
+            # Create ad details
+            cursor.execute("""
+                INSERT INTO link_ads_details
+                (ad_id, title, description, cpc, budget, clicks, skipped)
+                VALUES (%s, %s, %s, %s, %s, 0, 0)
+            """, (
+                ad_id,
+                ad_data["title"],
+                ad_data["description"],
+                ad_data["cpc"],
+                ad_data["budget"]
+            ))
+
+            # Deduct balance
+            cursor.execute("""
+                UPDATE clickbotusers
+                SET general_balance = general_balance - %s
+                WHERE id = %s
+            """, (budget, user_id))
+
+            conn.commit()
+
+    # Build confirmation message
+    message = (
+        f"⚙️ Campaign #{ad_id} - 🔗 Link URL promotion\n\n"
+        f"✏️ Title: {context.user_data['link_title']}\n"
+        f"🗨 Description: {context.user_data['link_description']}\n\n"
+        f"🔗 URL: {context.user_data['link_url']}\n\n"
+        f"Status: ▶️ Ongoing\n"
+        f"CPC: {context.user_data['link_cpc']:.8f} SOL\n"
+        f"Budget: {context.user_data['link_budget']:.8f} SOL\n"
+        f"Total Clicks: 0 clicks\n"
+        f"Skipped: 0 times\n\n"
+        "___________________________"
+    )
+
+    # Send campaign info without link preview
+    await update.message.reply_text(
+        message,
+        disable_web_page_preview=True
+    )
+
+    # Then return to main menu
+    await start(update, context)
+    return ConversationHandler.END
+
+async def link_cancel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Send cancellation message
     await update.message.reply_text("Operation cancelled.")
     
@@ -1530,6 +2054,29 @@ def main():
         fallbacks=[CommandHandler("cancel", cancel_handler)]
     )
 
+    post_views_conv_handler = ConversationHandler(
+        entry_points=[MessageHandler(filters.Regex("^📃 Post Views$"), post_views_start)],
+        states={
+            POST_MSG: [MessageHandler(filters.ALL & ~filters.COMMAND, post_views_message_handler)],
+            POST_CPC: [MessageHandler(filters.TEXT & ~filters.COMMAND, post_views_cpc_handler)],
+            POST_BUDGET: [MessageHandler(filters.TEXT & ~filters.COMMAND, post_views_budget_handler)],
+        },
+        fallbacks=[CommandHandler("cancel", post_views_cancel_handler)],
+    )
+
+    link_url_conv_handler = ConversationHandler(
+        entry_points=[MessageHandler(filters.Regex("^🔗 Link URL$"), link_url_start)],
+        states={
+            LINK_URL: [MessageHandler(filters.TEXT & ~filters.COMMAND, link_url_handler)],
+            LINK_TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, link_title_handler)],
+            LINK_DESCRIPTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, link_description_handler)],
+            LINK_CPC: [MessageHandler(filters.TEXT & ~filters.COMMAND, link_cpc_handler)],
+            LINK_BUDGET: [MessageHandler(filters.TEXT & ~filters.COMMAND, link_budget_handler)],
+        },
+        fallbacks=CommandHandler("cancel", link_cancel_handler)],
+    )
+
+
     deposit_conv_handler = ConversationHandler(
         entry_points=[MessageHandler(filters.Regex("^➕ Deposit$"), start_deposit)],
         states={
@@ -1545,6 +2092,8 @@ def main():
     application.add_handler(withdraw_conv_handler)
     application.add_handler(channel_ad_conv_handler)
     application.add_handler(bot_conv_handler)
+    application.add_handler(post_views_conv_handler)
+    application.add_handler(link_url_conv_handler)
     application.add_handler(deposit_conv_handler)
    
     # 3. Add command handlers
@@ -1570,6 +2119,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
