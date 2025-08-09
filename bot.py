@@ -36,6 +36,7 @@ TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
 CREATOR_ID = 7112609512  # Replace with your actual Telegram user ID
 BOT_USERNAME = "solearnhivebot"
+MAIN_CHANNEL_LINK = "https://t.me/SolEarnHiveUpdates"
 MIN_WITHDRAW = 0.1  # Minimum allowed
 UTC = pytz.utc
 NOWPAYMENTS_API_KEY = "5RRXFWG-7ZY41Q9-P19J9DZ-Q3QSZJM"
@@ -299,18 +300,12 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
         context.user_data['expecting_password'] = True
         await password_button_callback(update, context)
 
-    elif data.startswith("popup_yes_") or data.startswith("popup_no_"):
-        try:
-            chat_id = int(data.split("_")[-1])
-            if data.startswith("popup_yes_"):
-                update_vote_popup_preference(chat_id, True)
-                await query.edit_message_text("✅ You will now receive vote notifications.")
-            else:
-                update_vote_popup_preference(chat_id, False)
-                await query.edit_message_text("❌ You will not receive vote notifications.")
-        except Exception as e:
-            logger.error(f"Popup callback error: {e}")
-            await query.answer("Something went wrong.", show_alert=True)
+    elif data == "task_notification":
+        await query.edit_message_text(
+            "🔔 Task Notification settings will be available soon.\n\n"
+            "Stay tuned for the update!",
+            parse_mode="Markdown"
+        )
 
     else:
         await query.answer("Unknown button action.")
@@ -595,6 +590,20 @@ async def referrals_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
 
+async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [
+        [InlineKeyboardButton("📢 Main Channel", url=MAIN_CHANNEL_LINK)],
+        [InlineKeyboardButton("⚙ Task Notification", callback_data="task_notification")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await update.message.reply_text(
+        "⚙ **Settings**\n\n"
+        "Here you can manage your preferences and notifications.\n"
+        "Select an option below:",
+        parse_mode="Markdown",
+        reply_markup=reply_markup
+    )
         
 
 async def ultstat(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -919,6 +928,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
