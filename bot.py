@@ -551,15 +551,23 @@ async def cancel_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def referrals_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user.id
-    user_id = user.id 
+    user_id = getattr(update.effective_user, "id", update.effective_user)
     bot_username = (await context.bot.get_me()).username
 
     with get_db_connection() as conn:
         with conn.cursor() as cursor:
-            cursor.execute("SELECT payout_balance FROM clickbotusers WHERE user_id = %s", (user_id,))
-            payout_balance = cursor.fetchone()[0] or 0
+            # Ensure user exists
+            cursor.execute("SELECT 1 FROM clickbotusers WHERE id = %s", (user_id,))
+            if not cursor.fetchone():
+                cursor.execute("INSERT INTO clickbotusers (id) VALUES (%s)", (user_id,))
+                conn.commit()
 
+            # Fetch payout balance
+            cursor.execute("SELECT payout_balance FROM clickbotusers WHERE id = %s", (user_id,))
+            result = cursor.fetchone()
+            payout_balance = result[0] if result and result[0] is not None else 0
+
+            # Fetch total referrals
             cursor.execute("SELECT COUNT(*) FROM clickbotusers WHERE referral_id = %s", (user_id,))
             total_refs = cursor.fetchone()[0]
 
@@ -931,6 +939,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
