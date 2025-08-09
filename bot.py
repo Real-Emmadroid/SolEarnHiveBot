@@ -366,9 +366,9 @@ async def handle_convert(update: Update, context: ContextTypes.DEFAULT_TYPE):
 ASK_DEPOSIT_AMOUNT = 1
 
 async def start_deposit(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Keyboard with "🔙 Back" button
+    # Keyboard with "🔙Back" button
     reply_markup = ReplyKeyboardMarkup(
-        [["🔙 Back"]],
+        [["🔙Back"]],
         resize_keyboard=True
     )
 
@@ -385,7 +385,7 @@ async def process_deposit_amount(update: Update, context: ContextTypes.DEFAULT_T
     text = update.message.text.strip()
 
     # If user clicks Back
-    if text == "🔙 Back":
+    if text == "🔙Back":
         return await cancel_deposit(update, context)
 
     try:
@@ -417,10 +417,13 @@ async def process_deposit_amount(update: Update, context: ContextTypes.DEFAULT_T
 
 async def cancel_deposit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "Deposit process canceled.",
+        "❌ Deposit process canceled.",
         reply_markup=ReplyKeyboardRemove()
     )
+    # Go back to start menu
+    await start(update, context)
     return ConversationHandler.END
+
 
 
 
@@ -433,7 +436,7 @@ async def start_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
     wallet_address = user.get("wallet_address")
 
     # Keyboard for canceling
-    reply_markup = ReplyKeyboardMarkup([["🔙 Back"]], resize_keyboard=True)
+    reply_markup = ReplyKeyboardMarkup([["🔙 Cancel"]], resize_keyboard=True)
 
     if not wallet_address:
         keyboard = [[InlineKeyboardButton("➕ Set / Change Wallet", callback_data="set_wallet")]]
@@ -545,6 +548,14 @@ async def process_withdraw_amount(update: Update, context: ContextTypes.DEFAULT_
     )
 
     return ConversationHandler.END
+
+async def cancel_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("❌ Withdrawal process canceled.")
+    # Go back to start menu
+    await start(update, context)
+    return ConversationHandler.END
+
+
 
 
 async def referrals_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -862,22 +873,25 @@ def main():
         states={
             ASK_WALLET: [
                 CallbackQueryHandler(withdraw_button_handler, pattern="^set_wallet$"),
-                MessageHandler(filters.Regex("^🔙 Back$"), cancel_withdraw),
+                MessageHandler(filters.Regex("^🔙 Cancel$"), cancel_withdraw),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, process_wallet_address)
             ],
             ASK_WITHDRAW_AMOUNT: [
-                MessageHandler(filters.Regex("^🔙 Back$"), cancel_withdraw),
+                MessageHandler(filters.Regex("^🔙 Cancel$"), cancel_withdraw),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, process_withdraw_amount)
             ]
         },
-        fallbacks=[MessageHandler(filters.Regex("^🔙 Back$"), cancel_withdraw)],
+        fallbacks=[MessageHandler(filters.Regex("^🔙 Cancel$"), cancel_withdraw)],
     )
 
 
     deposit_conv_handler = ConversationHandler(
         entry_points=[MessageHandler(filters.Regex("^➕ Deposit$"), start_deposit)],
         states={
-            ASK_DEPOSIT_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_deposit_amount)]
+            ASK_DEPOSIT_AMOUNT: [
+                MessageHandler(filters.Regex("^🔙Back$"), cancel_deposit),  # Back button
+                MessageHandler(filters.TEXT & ~filters.COMMAND, process_deposit_amount)
+            ]
         },
         fallbacks=[CommandHandler("cancel", cancel_deposit)],
     )
@@ -910,6 +924,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
