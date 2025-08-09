@@ -47,6 +47,20 @@ def init_databases():
             ''')
 
             cursor.execute('''
+                CREATE TABLE NOT EXISTS channel_ads_details (
+                    ad_id BIGINT PRIMARY KEY REFERENCES ads(id) ON DELETE CASCADE,
+                    title TEXT NOT NULL,
+                    description TEXT NOT NULL,
+                    cpc NUMERIC(18,8) NOT NULL CHECK (cpc >= 0),
+                    budget NUMERIC(18,8) NOT NULL CHECK (budget >= 0),
+                    clicks BIGINT DEFAULT 0 CHECK (clicks >= 0),
+                    skipped BIGINT DEFAULT 0 CHECK (skipped >= 0),
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                );
+            ''')
+
+            cursor.execute('''
                 CREATE TABLE IF NOT EXISTS ads (
                     id SERIAL PRIMARY KEY,
                     user_id BIGINT NOT NULL,
@@ -200,6 +214,7 @@ def with_retry(max_attempts=3, delay=0.5):
 if __name__ == "__main__":
     init_databases()
     print("Databases initialized in Supabase PostgreSQL database.")
+
 
 
 
