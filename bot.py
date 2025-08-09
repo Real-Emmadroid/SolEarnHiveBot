@@ -39,9 +39,6 @@ BOT_USERNAME = "solearnhivebot"
 MIN_WITHDRAW = 0.1  # Minimum allowed
 UTC = pytz.utc
 NOWPAYMENTS_API_KEY = "5RRXFWG-7ZY41Q9-P19J9DZ-Q3QSZJM"
-IPN_SECRET = "emm_supersecret123!"
-COINPAYMENTS_PUBLIC_KEY = "97189cb2811dc275b1512b6a6e670d7a2fb5e0bb8d325466006d6a30a9320670"
-COINPAYMENTS_PRIVATE_KEY = "b0a865a0aFCdeEf0c6ba8c26c6dF781510A5B2C3FE0ce2D45f4957aB48167957"
 app = Flask(__name__)
 
 def create_payment(user_id, amount_sol):
@@ -343,9 +340,14 @@ async def start_deposit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return ASK_DEPOSIT_AMOUNT
 
+
 async def process_deposit_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text.strip()
+
+    # If user clicks Back
+    if text == "🔙 Back":
+        return await cancel_deposit(update, context)
 
     try:
         amount = float(text)
@@ -359,19 +361,27 @@ async def process_deposit_amount(update: Update, context: ContextTypes.DEFAULT_T
 
     if result.get("invoice_url"):
         await update.message.reply_text(
-            f"💰 Click below to complete your deposit of *{amount:.6f} SOL* using any crypto:\n\n{result['invoice_url']}",
-            parse_mode="Markdown"
+            f"Click below to complete your deposit of *{amount:.6f} SOL*\n"
+            f"You can pay in any crypto of your choice:\n\n{result['invoice_url']}\n\n"
+            f"💡 Payment in other cryptocurrencies will be automatically converted into SOL",
+            parse_mode="Markdown",
+            reply_markup=ReplyKeyboardRemove()
         )
     else:
-        await update.message.reply_text("❌ Failed to generate deposit link. Try again later.")
+        await update.message.reply_text(
+            "❌ Failed to generate deposit link. Try again later.",
+            reply_markup=ReplyKeyboardRemove()
+        )
 
     return ConversationHandler.END
 
 
 async def cancel_deposit(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("❌ Deposit process canceled.")
+    await update.message.reply_text(
+        "Deposit process canceled.",
+        reply_markup=ReplyKeyboardRemove()
+    )
     return ConversationHandler.END
-
 
 
 
@@ -729,6 +739,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
