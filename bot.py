@@ -360,19 +360,25 @@ async def handle_convert(update: Update, context: ContextTypes.DEFAULT_TYPE):
 ASK_DEPOSIT_AMOUNT = 1
 
 async def start_deposit(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Clear any previous context
+    context.user_data.clear()
+    
     # Keyboard with "🔙Back" button
     reply_markup = ReplyKeyboardMarkup(
         [["🔙Back"]],
-        resize_keyboard=True
+        resize_keyboard=True,
+        one_time_keyboard=True  # Added to make the keyboard less intrusive
     )
 
     await update.message.reply_text(
-        "💸 How much SOL would you like to deposit?\n\nPlease enter the amount (e.g. `0.5`):",
+        "💸 How much SOL would you like to deposit?\n\n"
+        "• Minimum deposit: 0.1 SOL\n"
+        "• Enter amount (e.g. `0.5` or `1.25`):",
         parse_mode="Markdown",
-        reply_markup=reply_markup
+        reply_markup=reply_markup,
+        disable_web_page_preview=True
     )
     return ASK_DEPOSIT_AMOUNT
-
 
 async def process_deposit_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -384,34 +390,52 @@ async def process_deposit_amount(update: Update, context: ContextTypes.DEFAULT_T
 
     try:
         amount = float(text)
-        if amount <= 0:
-            raise ValueError
+        if amount < 0.1:  # Minimum deposit check
+            await update.message.reply_text(
+                "❌ Minimum deposit is 0.1 SOL. Please enter a larger amount.",
+                reply_markup=ReplyKeyboardMarkup([["🔙Back"]], resize_keyboard=True)
+            )
+            return ASK_DEPOSIT_AMOUNT
     except ValueError:
-        await update.message.reply_text("❌ Please enter a valid amount greater than 0.")
+        await update.message.reply_text(
+            "❌ Please enter a valid number (e.g. 0.5 or 1.25).",
+            reply_markup=ReplyKeyboardMarkup([["🔙Back"]], resize_keyboard=True)
+        )
         return ASK_DEPOSIT_AMOUNT
 
     result = create_payment(user_id, amount)
 
     if result.get("invoice_url"):
+        # Save amount in context for potential retries
+        context.user_data['deposit_amount'] = amount
+        
         await update.message.reply_text(
-            f"Click below to complete your deposit of *{amount:.6f} SOL*\n"
-            f"You can pay in any crypto of your choice:\n\n{result['invoice_url']}\n\n"
-            f"💡 Payment in other cryptocurrencies will be automatically converted into SOL",
+            f"🔄 Please complete your deposit of *{amount:.6f} SOL*\n\n"
+            f"1. Click: [Payment Link]({result['invoice_url']})\n"
+            f"2. Choose your payment method\n"
+            f"3. Complete the transaction\n\n"
+            "💡 Payments in other cryptos will auto-convert to SOL",
             parse_mode="Markdown",
-            reply_markup=reply_markup
+            disable_web_page_preview=True,
+            reply_markup=ReplyKeyboardMarkup(REPLY_KEYBOARD, resize_keyboard=True)
         )
     else:
         await update.message.reply_text(
-            "❌ Failed to generate deposit link. Try again later.",
-            reply_markup=reply_markup
+            "❌ Failed to generate payment link. Please try again later.",
+            reply_markup=ReplyKeyboardMarkup(REPLY_KEYBOARD, resize_keyboard=True)
         )
-
+    return ConversationHandler.END
 
 async def cancel_deposit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "❌ Deposit process canceled.",
-        reply_markup=reply_markup
+        reply_markup=ReplyKeyboardMarkup(REPLY_KEYBOARD, resize_keyboard=True)
     )
+    return ConversationHandler.END
+
+
+async def cancel_deposit(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("❌ Deposit process canceled.")
     # Go back to start menu
     await start(update, context)
     return ConversationHandler.END
@@ -426,14 +450,22 @@ async def start_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = get_user(user_id)
     wallet_address = user.get("wallet_address")
 
-    # Reply keyboard for canceling withdrawal
-    reply_markup = ReplyKeyboardMarkup([["🔙 Cancel"]], resize_keyboard=True)
+    # Clear any previous context
+    context.user_data.clear()
+    
+    # Consistent cancel keyboard throughout flow
+    cancel_keyboard = ReplyKeyboardMarkup([["🔙 Cancel"]], 
+                                        resize_keyboard=True,
+                                        one_time_keyboard=True)
 
     if not wallet_address:
-        # Show inline button to set wallet
-        keyboard = [[InlineKeyboardButton("➕ Set / Change Wallet", callback_data="set_wallet")]]
+        keyboard = [
+            [InlineKeyboardButton("➕ Set Wallet Address", callback_data="set_wallet")],
+            [InlineKeyboardButton("❌ Cancel", callback_data="cancel_withdraw")]
+        ]
         await update.message.reply_text(
-            "⚠️ You have not set a withdrawal wallet address.",
+            "⚠️ No withdrawal wallet set\n\n"
+            "Please set your Solana wallet address to withdraw funds:",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
         return ASK_WALLET
@@ -441,57 +473,69 @@ async def start_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
     payout_balance = float(user["payout_balance"])
     if payout_balance < MIN_WITHDRAW:
         await update.message.reply_text(
-            f"❌ You must have at least {MIN_WITHDRAW} SOL to withdraw.\n"
-            f"💰 Current balance: {payout_balance:.6f} SOL",
-            reply_markup = ReplyKeyboardMarkup([["🔙 Cancel"]], resize_keyboard=True)
+            f"❌ Minimum withdrawal: {MIN_WITHDRAW} SOL\n"
+            f"💰 Your balance: {payout_balance:.6f} SOL\n\n"
+            "Complete more tasks to increase your balance!",
+            reply_markup=ReplyKeyboardMarkup(REPLY_KEYBOARD, resize_keyboard=True)
         )
+        return ConversationHandler.END  # Added missing return
 
     await update.message.reply_text(
-        f"💳 Your withdrawal wallet is:\n`{wallet_address}`\n\n"
-        "Enter the amount of SOL you wish to withdraw:",
+        f"💳 Withdrawal Wallet:\n`{wallet_address}`\n\n"
+        f"💰 Available: {payout_balance:.6f} SOL\n\n"
+        "Enter amount to withdraw:",
         parse_mode="Markdown",
-        reply_markup=reply_markup
+        reply_markup=cancel_keyboard
     )
     return ASK_WITHDRAW_AMOUNT
 
-
-# Step 2: Inline button handler to set wallet
 async def withdraw_button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
     if query.data == "set_wallet":
         await query.edit_message_text(
-            "📩 SEND ME YOUR SOLANA WALLET ADDRESS to use for future withdrawals.\n\n"
-            "✅ Make sure it's correct — this will be saved in your account."
+            "📩 Send your Solana wallet address:\n\n"
+            "• Must be a valid SOL address\n"
+            "• Double-check before submitting\n"
+            "• Used for all future withdrawals",
+            reply_markup=ReplyKeyboardMarkup([["🔙 Cancel"]], resize_keyboard=True)
+        )
+        return ASK_WALLET
+    elif query.data == "cancel_withdraw":
+        await cancel_withdraw(update, context)
+        return ConversationHandler.END
+
+async def process_wallet_address(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    wallet_address = update.message.text.strip()
+    
+    # Basic validation
+    if len(wallet_address) < 32 or not wallet_address.startswith(('0x', 'solana:')):  # Adjust based on actual SOL address format
+        await update.message.reply_text(
+            "❌ Invalid Solana address format\n"
+            "Please check and resend your wallet address:",
+            reply_markup=ReplyKeyboardMarkup([["🔙 Cancel"]], resize_keyboard=True)
         )
         return ASK_WALLET
 
-
-# Step 3: Save wallet address
-async def process_wallet_address(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    wallet_address = update.message.text.strip()
-
-    if len(wallet_address) < 20:
-        await update.message.reply_text("❌ Invalid address. Please send a valid Solana address.")
-        return ASK_WALLET
-
     with get_db_connection() as conn:
         with conn.cursor() as cursor:
             cursor.execute("""
-                UPDATE clickbotusers SET wallet_address = %s WHERE id = %s
+                UPDATE clickbotusers 
+                SET wallet_address = %s 
+                WHERE id = %s
             """, (wallet_address, user_id))
             conn.commit()
 
     await update.message.reply_text(
-        f"✅ Wallet address saved:\n`{wallet_address}`\n\nNow send me the amount of SOL you want to withdraw:",
-        parse_mode="Markdown"
+        f"✅ Wallet saved!\n`{wallet_address}`\n\n"
+        "Now enter withdrawal amount (SOL):",
+        parse_mode="Markdown",
+        reply_markup=ReplyKeyboardMarkup([["🔙 Cancel"]], resize_keyboard=True)
     )
     return ASK_WITHDRAW_AMOUNT
 
-
-# Step 4: Process withdrawal
 async def process_withdraw_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text.strip()
@@ -501,7 +545,10 @@ async def process_withdraw_amount(update: Update, context: ContextTypes.DEFAULT_
         if amount <= 0:
             raise ValueError
     except ValueError:
-        await update.message.reply_text("❌ Please enter a valid withdrawal amount.")
+        await update.message.reply_text(
+            "❌ Invalid amount\nPlease enter a positive number (e.g. 1.5):",
+            reply_markup=ReplyKeyboardMarkup([["🔙 Cancel"]], resize_keyboard=True)
+        )
         return ASK_WITHDRAW_AMOUNT
 
     user = get_user(user_id)
@@ -509,45 +556,71 @@ async def process_withdraw_amount(update: Update, context: ContextTypes.DEFAULT_
     wallet_address = user["wallet_address"]
 
     if amount < MIN_WITHDRAW:
-        await update.message.reply_text(f"❌ Minimum withdrawal is {MIN_WITHDRAW} SOL")
+        await update.message.reply_text(
+            f"❌ Minimum withdrawal: {MIN_WITHDRAW} SOL\n"
+            f"You entered: {amount:.6f} SOL",
+            reply_markup=ReplyKeyboardMarkup([["🔙 Cancel"]], resize_keyboard=True)
+        )
         return ASK_WITHDRAW_AMOUNT
 
     if amount > payout_balance:
-        await update.message.reply_text("❌ Insufficient payout balance.")
+        await update.message.reply_text(
+            f"❌ Insufficient balance\n"
+            f"Available: {payout_balance:.6f} SOL\n"
+            f"Requested: {amount:.6f} SOL",
+            reply_markup=ReplyKeyboardMarkup([["🔙 Cancel"]], resize_keyboard=True)
+        )
         return ASK_WITHDRAW_AMOUNT
 
-    # Deduct balance
+    # Process withdrawal
     new_balance = payout_balance - amount
     update_balances(user_id, payout=new_balance)
 
-    # Save withdrawal request
     with get_db_connection() as conn:
         with conn.cursor() as cursor:
             cursor.execute("""
-                INSERT INTO withdrawals (user_id, amount, address, status)
-                VALUES (%s, %s, %s, %s)
+                INSERT INTO withdrawals 
+                (user_id, amount, address, status, created_at)
+                VALUES (%s, %s, %s, %s, NOW())
             """, (user_id, amount, wallet_address, "pending"))
             conn.commit()
 
-    await update.message.reply_text(
-        f"✅ Withdrawal request submitted:\n💸 *{amount:.6f} SOL* to `{wallet_address}`\n\n⏳ Awaiting manual processing.",
-        parse_mode="Markdown"
+    # Format withdrawal details
+    withdrawal_msg = (
+        f"✅ Withdrawal Submitted\n\n"
+        f"• Amount: {amount:.6f} SOL\n"
+        f"• Wallet: `{wallet_address}`\n"
+        f"• Status: Pending Approval\n\n"
+        f"⏳ Processed within 24 hours\n"
+        f"📩 Contact support for questions"
     )
 
-    # Notify admin
+    await update.message.reply_text(
+        withdrawal_msg,
+        parse_mode="Markdown",
+        reply_markup=ReplyKeyboardMarkup(REPLY_KEYBOARD, resize_keyboard=True)
+    )
+
+    # Admin notification
+    admin_msg = (
+        f"⚠️ New Withdrawal Request\n\n"
+        f"• User: {user_id}\n"
+        f"• Amount: {amount} SOL\n"
+        f"• Wallet: {wallet_address}\n"
+        f"• Balance After: {new_balance:.6f} SOL"
+    )
     await context.bot.send_message(
         chat_id=CREATOR_ID,
-        text=f"🔔 New withdrawal request\nUser ID: {user_id}\nAmount: {amount} SOL\nAddress: {wallet_address}"
+        text=admin_msg
     )
 
+    return ConversationHandler.END
+
 async def cancel_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("❌ Withdrawal process canceled.")
+    await update.message.reply_text("❌ Withdrawal canceled.")
     # Go back to start menu
     await start(update, context)
     return ConversationHandler.END
-
-
-
 
 async def referrals_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = getattr(update.effective_user, "id", update.effective_user)
@@ -1233,6 +1306,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
