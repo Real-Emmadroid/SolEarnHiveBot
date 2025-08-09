@@ -403,7 +403,7 @@ async def process_deposit_amount(update: Update, context: ContextTypes.DEFAULT_T
     else:
         await update.message.reply_text(
             "❌ Failed to generate deposit link. Try again later.",
-            reply_markup=ReplyKeyboardRemove()
+            reply_markup=reply_markup
         )
 
     return ConversationHandler.END
@@ -445,7 +445,7 @@ async def start_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             f"❌ You must have at least {MIN_WITHDRAW} SOL to withdraw.\n"
             f"💰 Current balance: {payout_balance:.6f} SOL",
-            reply_markup=ReplyKeyboardRemove()
+            reply_markup = ReplyKeyboardMarkup([["🔙 Cancel"]], resize_keyboard=True)
         )
         return ConversationHandler.END
 
@@ -792,12 +792,16 @@ async def channel_budget_handler(update: Update, context: ContextTypes.DEFAULT_T
     user_balance = context.user_data.get("user_balance", 0.0)
 
     if budget_text.lower() == "🔙 back":
-        await update.message.reply_text("Cancelled channel ad creation.", reply_markup=ReplyKeyboardRemove())
+        await update.message.reply_text(
+            "Cancelled channel ad creation.",
+            reply_markup=ReplyKeyboardMarkup(REPLY_KEYBOARD, resize_keyboard=True)
+        )
         return ConversationHandler.END
 
-    if budget_text == "➕ deposit":
-        await update.message.reply_text("Please deposit funds via /deposit command or through the bot website.")
-        return CHANNEL_BUDGET
+    if budget_text == "➕ Deposit":
+        await start_deposit(update, context)
+        return ConversationHandler.END  # End current conversation
+
 
     try:
         budget = float(budget_text)
@@ -870,15 +874,24 @@ async def channel_budget_handler(update: Update, context: ContextTypes.DEFAULT_T
         "___________________________"
     )
 
-    await update.message.reply_text(message, reply_markup=ReplyKeyboardRemove())
+    # Send campaign info without link preview
+    await update.message.reply_text(
+        message,
+        disable_web_page_preview=True
+    )
 
+    # Then return to main menu
+    await start(update, context)
     return ConversationHandler.END
 
 
 async def cancel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Operation cancelled.", reply_markup=ReplyKeyboardRemove())
+    # Send cancellation message
+    await update.message.reply_text("Operation cancelled.")
+    
+    # Return to main menu
+    await start(update, context)
     return ConversationHandler.END
-
 
 async def ultstat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != CREATOR_ID:
@@ -1225,6 +1238,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
