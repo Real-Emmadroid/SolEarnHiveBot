@@ -197,8 +197,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         with conn.cursor() as cursor:
             # Check if user exists
             cursor.execute("SELECT 1 FROM clickbotusers WHERE id = %s", (user_id,))
-            if cursor.fetchone():
-                return  # User already exists, skip
+            if not cursor.fetchone():
 
             # Insert new user
             cursor.execute("""
@@ -918,5 +917,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
