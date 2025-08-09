@@ -978,17 +978,25 @@ async def bot_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def bot_forward_msg_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    message: Message = update.message
+    message = update.message
 
-    # Check if message is forwarded from a bot (forward_from and forward_from.is_bot)
-    if not message.forward_from or not message.forward_from.is_bot:
+    # Check if message is forwarded from a bot (using forward_origin instead of forward_from)
+    if not message.forward_origin or not isinstance(message.forward_origin, MessageOriginUser):
+        await update.message.reply_text(
+            "‼️ This is not a forwarded message from a bot. Please forward a message from the bot you want to promote."
+        )
+        return BOT_FORWARD_MSG
+
+    # Get the original sender (bot)
+    origin_user = message.forward_origin.sender_user
+    if not origin_user or not origin_user.is_bot:
         await update.message.reply_text(
             "‼️ This is not a forwarded message from a bot. Please forward a message from the bot you want to promote."
         )
         return BOT_FORWARD_MSG
 
     # Save forwarded bot username for later
-    context.user_data["bot_username"] = message.forward_from.username
+    context.user_data["bot_username"] = origin_user.username
 
     await update.message.reply_text(
         "➕ Promotion Creation\n\n"
@@ -1169,10 +1177,10 @@ async def bot_budget_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
             conn.commit()
 
     message = (
-        f"⚙️ Campaign #{ad_id} - 🤖 Bot promotion\n\n"
+        f"⚙️ Campaign #{ad_id} - Bot promotion\n\n"
         f"✏️ Title: {context.user_data['bot_title']}\n"
         f"🗨 Description: {context.user_data['bot_description']}\n\n"
-        f"🤖 Bot: @{context.user_data['bot_username']}\n"
+        f"Bot: @{context.user_data['bot_username']}\n"
         f"🔗 URL: {context.user_data['bot_promo_link']}\n\n"
         f"Status: ▶️ Ongoing\n"
         f"CPC: {context.user_data['bot_cpc']:.8f} SOL\n"
@@ -1562,6 +1570,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
