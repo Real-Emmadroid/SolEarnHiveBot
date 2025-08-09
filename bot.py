@@ -447,7 +447,6 @@ async def start_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"💰 Current balance: {payout_balance:.6f} SOL",
             reply_markup = ReplyKeyboardMarkup([["🔙 Cancel"]], resize_keyboard=True)
         )
-        return ConversationHandler.END
 
     await update.message.reply_text(
         f"💳 Your withdrawal wallet is:\n`{wallet_address}`\n\n"
@@ -1238,6 +1237,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
