@@ -29,6 +29,7 @@ def init_databases():
                     id BIGINT PRIMARY KEY,
                     general_balance NUMERIC DEFAULT 0,
                     payout_balance NUMERIC DEFAULT 0,
+                    wallet_address TEXT,
                     deposit_address TEXT
                 );
             ''')
@@ -149,6 +150,7 @@ def with_retry(max_attempts=3, delay=0.5):
 if __name__ == "__main__":
     init_databases()
     print("Databases initialized in Supabase PostgreSQL database.")
+
 
 
 
