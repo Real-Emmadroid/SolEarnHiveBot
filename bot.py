@@ -1159,17 +1159,16 @@ def main():
             ASK_WALLET: [
                 CallbackQueryHandler(withdraw_button_handler, pattern="^set_wallet$"),
                 MessageHandler(filters.Regex("^🔙 Cancel$"), cancel_withdraw),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, process_wallet_address)
+                MessageHandler(filters.TEXT & ~filters.COMMAND, process_wallet_address),
             ],
             ASK_WITHDRAW_AMOUNT: [
                 MessageHandler(filters.Regex("^🔙 Cancel$"), cancel_withdraw),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, process_withdraw_amount)
-            ]
+                MessageHandler(filters.TEXT & ~filters.COMMAND, process_withdraw_amount),
+            ],
         },
         fallbacks=[MessageHandler(filters.Regex("^🔙 Cancel$"), cancel_withdraw)],
     )
 
-    # Register this conversation handler in your bot setup
     channel_ad_conv_handler = ConversationHandler(
         entry_points=[CommandHandler("channel_ad_start", channel_ad_start)],
         states={
@@ -1181,21 +1180,21 @@ def main():
         },
         fallbacks=[CommandHandler("cancel", cancel_handler)],
     )
-    application.add_handler(channel_ad_conv_handler)
-
 
     deposit_conv_handler = ConversationHandler(
         entry_points=[MessageHandler(filters.Regex("^➕ Deposit$"), start_deposit)],
         states={
             ASK_DEPOSIT_AMOUNT: [
-                MessageHandler(filters.Regex("^🔙Back$"), cancel_deposit),  # Back button
-                MessageHandler(filters.TEXT & ~filters.COMMAND, process_deposit_amount)
-            ]
+                MessageHandler(filters.Regex("^🔙Back$"), cancel_deposit),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, process_deposit_amount),
+            ],
         },
         fallbacks=[CommandHandler("cancel", cancel_deposit)],
     )
-    application.add_handler(deposit_conv_handler)
+
     application.add_handler(withdraw_conv_handler)
+    application.add_handler(channel_ad_conv_handler)
+    application.add_handler(deposit_conv_handler)
    
    
    
@@ -1225,6 +1224,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
