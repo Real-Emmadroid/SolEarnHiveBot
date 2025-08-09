@@ -582,7 +582,12 @@ async def referrals_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Start using SOL EarnHive today!\n\n{referral_link} 👈"
     )
 
-    share_url = f"https://t.me/share/url?url={referral_link}&text={share_text.replace(' ', '+')}"
+    # URL encode both the link and the text
+    encoded_referral_link = urllib.parse.quote(referral_link)
+    encoded_share_text = urllib.parse.quote(share_text)
+
+    # Telegram share URL with full preloaded message
+    share_url = f"https://t.me/share/url?url={encoded_referral_link}&text={encoded_share_text}"
 
     # Inline button for sharing
     keyboard = [
@@ -939,6 +944,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
