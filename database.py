@@ -46,6 +46,18 @@ def init_databases():
                 );
             ''')
 
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS ads (
+                    id SERIAL PRIMARY KEY,
+                    user_id BIGINT NOT NULL,
+                    ad_type VARCHAR(50) NOT NULL, -- 'channel_join', 'bot_messaging', 'post_view', 'external_link'
+                    details JSONB NOT NULL,        -- e.g., {"channel_link": "..."} or {"url": "..."}
+                    status VARCHAR(20) NOT NULL,   -- 'running', 'expired', 'paused', etc.
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
+                    expires_at TIMESTAMP WITH TIME ZONE
+                );
+            ''')
+
 
             cursor.execute('''
                 ALTER TABLE premium_users
@@ -188,6 +200,7 @@ def with_retry(max_attempts=3, delay=0.5):
 if __name__ == "__main__":
     init_databases()
     print("Databases initialized in Supabase PostgreSQL database.")
+
 
 
 
