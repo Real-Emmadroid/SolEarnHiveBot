@@ -526,16 +526,27 @@ register_handlers(application)
 # ----------------- WEBHOOK route -----------------
 @app.route('/webhook', methods=['POST'])
 def webhook_entry():
-    """Telegram will POST updates here. We convert JSON to Update and process."""
     try:
         data = request.get_json(force=True)
         update = Update.de_json(data, application.bot)
-        # Run processing in a new asyncio loop for this request
-        # This runs handlers synchronously inside the request lifecycle.
-        asyncio.run(application.process_update(update))
+        # Instead of asyncio.run(), just create a task in the running loop
+        asyncio.get_event_loop().create_task(application.process_update(update))
     except Exception as e:
         logger.exception("Failed to process webhook update: %s", e)
     return "OK", 200
+
+
+# At the bottom of bot.py before set_hook()
+async def init_bot():
+    await application.initialize()   # <-- This initializes handlers, context, etc.
+    await application.start()        # Starts any background jobs
+    await application.bot.delete_webhook()
+    await application.bot.set_webhook(WEBHOOK_URL)
+    logger.info("Webhook set to %s", WEBHOOK_URL)
+
+# Run init once at startup
+asyncio.run(init_bot())
+
 
 # ----------------- STARTUP: set webhook and run Flask -----------------
 if __name__ == "__main__":
@@ -551,3 +562,4 @@ if __name__ == "__main__":
     # Start Flask (Render binds the port)
     port = int(os.getenv("PORT", "8080"))
     app.run(host="0.0.0.0", port=port)
+
