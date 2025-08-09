@@ -183,6 +183,7 @@ REPLY_KEYBOARD = [
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
+    user_id = user.id 
     chat_id = update.effective_chat.id
     args = context.args  # e.g., after /start 12345
     referral_id = None
@@ -905,6 +906,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
