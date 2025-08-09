@@ -534,16 +534,20 @@ async def init_bot():
     logger.info("Webhook set to %s", WEBHOOK_URL)
 
 # ----------------- WEBHOOK route -----------------
-@app.route('/webhook', methods=['POST'])
+@app.route("/webhook", methods=["POST"])
 def webhook_entry():
     try:
-        data = request.get_json(force=True)
-        update = Update.de_json(data, application.bot)
-        # Instead of asyncio.run(), just create a task in the running loop
-        asyncio.get_event_loop().create_task(application.process_update(update))
+        update = Update.de_json(request.get_json(force=True), application.bot)
+        
+        # Schedule processing in the bot's main asyncio loop
+        asyncio.run_coroutine_threadsafe(
+            application.process_update(update),
+            application.loop  # Use the loop from the Application instance
+        )
     except Exception as e:
-        logger.exception("Failed to process webhook update: %s", e)
+        app.logger.error(f"Failed to process webhook update: {e}", exc_info=True)
     return "OK", 200
+
 
 
 # ----------------- STARTUP: set webhook and run Flask -----------------
@@ -551,6 +555,7 @@ if __name__ == "__main__":
     loop = asyncio.get_event_loop()
     loop.run_until_complete(init_bot())
     app.run(host="0.0.0.0", port=8080)
+
 
 
 
