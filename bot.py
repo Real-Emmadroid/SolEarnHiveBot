@@ -25,7 +25,7 @@ from io import BytesIO
 import threading
 from collections import defaultdict
 from datetime import datetime, time, timedelta, timezone
-from telegram import MessageEntity, MessageOriginUser, InputMediaPhoto, Update, ChatMember, Poll, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, ReplyKeyboardRemove, CallbackQuery, ChatMember, ChatPermissions, BotCommand, Bot
+from telegram import MessageEntity, MessageOriginUser, MessageOriginalChat, InputMediaPhoto, Update, ChatMember, Poll, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, ReplyKeyboardRemove, CallbackQuery, ChatMember, ChatPermissions, BotCommand, Bot
 from telegram.ext import ApplicationBuilder, Application, CommandHandler, ConversationHandler, CallbackContext, CallbackQueryHandler, MessageHandler, filters, JobQueue, ContextTypes, ChatMemberHandler
 from telegram.constants import ChatAction, ChatMemberStatus, ParseMode, MessageEntityType
 from database import init_databases
@@ -281,10 +281,12 @@ async def balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     payout = float(user["payout_balance"])
 
     message = (
-        f"💰 *Your Balance*\n\n"
-        f"• 🪙 *General Balance:* {general:.6f} SOL\n"
-        f"• 💸 *Available for Payout:* {payout:.6f} SOL\n\n"
-        f"Use the options below to manage your wallet."
+        f"🔸️ *Balance:* \n  {general:.6f} SOL\n\n"
+        f"🔸️ *Available for Payout:* \n  {payout:.6f} SOL\n"
+        f"-----------------------------------------------------------\n"
+        f"Click《Deposit》to generate balance topup invoice.\n\n"
+        f"💱 *Top-up Methods*\n"
+        f"• *Multi coins*"
     )
 
     await update.message.reply_text(
@@ -1226,6 +1228,13 @@ async def post_views_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return POST_MSG
 
 async def post_views_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip() if update.message.text else ""
+
+    # Check for back button first
+    if text.lower() == "🔙 back":
+        await post_views_cancel_handler(update, context)
+        return ConversationHandler.END
+
     message = update.message
     reply_markup = ReplyKeyboardMarkup([["🔙 Back"]], resize_keyboard=True, one_time_keyboard=True)
 
@@ -1292,10 +1301,7 @@ async def post_views_cpc_handler(update: Update, context: ContextTypes.DEFAULT_T
     reply_markup = ReplyKeyboardMarkup([["🔙 Back"]], resize_keyboard=True, one_time_keyboard=True)
 
     if cpc_text.lower() == "🔙 back":
-        await update.message.reply_text(
-            "Cancelled post views ad creation.",
-            reply_markup=ReplyKeyboardMarkup(REPLY_KEYBOARD, resize_keyboard=True)
-        )
+        await post_views_cancel_handler(update, context)
         return ConversationHandler.END
 
     try:
@@ -1344,10 +1350,7 @@ async def post_views_budget_handler(update: Update, context: ContextTypes.DEFAUL
     )
 
     if budget_text.lower() == "🔙 back":
-        await update.message.reply_text(
-            "Cancelled post views ad creation.",
-            reply_markup=ReplyKeyboardMarkup(REPLY_KEYBOARD, resize_keyboard=True)
-        )
+        await post_views_cancel_handler(update, context)
         return ConversationHandler.END
 
     if budget_text == "➕ Deposit":
@@ -1653,6 +1656,9 @@ async def link_budget_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
             )
         )
         return LINK_BUDGET
+
+    # Save budget in context for message display
+    context.user_data["link_budget"] = budget
 
     # Save campaign to database
     ad_data = {
@@ -2119,6 +2125,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
