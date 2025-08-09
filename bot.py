@@ -1217,114 +1217,158 @@ async def bot_cancel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
 POST_MSG, POST_CPC, POST_BUDGET = range(3)
 
 async def post_views_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [["🔙 Back"]]
-    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
+    """Initialize post views promotion"""
+    context.user_data.clear()  # Clear any previous data
+    reply_markup = ReplyKeyboardMarkup([["🔙 Back"]], resize_keyboard=True)
+    
     await update.message.reply_text(
-        "🔎 Send or forward now here the message you want to promote.\n"
-        "Users will be paid to view the message for at least 10 seconds",
-        reply_markup=reply_markup,
+        "📝 <b>Post Views Promotion</b>\n\n"
+        "1. Forward a message from any channel/group\n"
+        "2. We'll generate a direct link to the message\n"
+        "3. Set your cost per view and budget\n\n"
+        "<i>Note: The message must be from a public channel</i>",
+        parse_mode="HTML",
+        reply_markup=reply_markup
     )
     return POST_MSG
 
 async def post_views_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    message = update.message
+    """Handle the forwarded message and generate link"""
+    text = update.message.text.strip() if update.message.text else ""
+    reply_markup = ReplyKeyboardMarkup([["🔙 Back"]], resize_keyboard=True)
 
-    # Check if the message is forwarded from somewhere
-    if not message.forward_from_chat and not message.forward_from:
+    # Handle back button
+    if text.lower() == "🔙 back":
+        await post_views_cancel_handler(update, context)
+        return ConversationHandler.END
+
+    # Check if message is forwarded
+    if not update.message.forward_origin:
         await update.message.reply_text(
-            "‼️ This is not a forwarded message. Please forward the Telegram message you want to promote.",
-            reply_markup=ReplyKeyboardMarkup([["🔙 Back"]], resize_keyboard=True, one_time_keyboard=True)
+            "❌ Please <b>forward</b> a message from a channel/group, don't just type it.",
+            parse_mode="HTML",
+            reply_markup=reply_markup
         )
         return POST_MSG
 
-    # Get the original chat id where the message was forwarded from
-    if message.forward_from_chat:
-        context.user_data["post_chat_id"] = message.forward_from_chat.id
-    elif message.forward_from:
-        context.user_data["post_chat_id"] = message.forward_from.id
-    else:
+    origin = update.message.forward_origin
+    chat_id = None
+    username = None
+
+    # Determine source chat based on origin type
+    if isinstance(origin, MessageOriginChannel):
+        chat_id = origin.chat.id
+        username = origin.chat.username
+    elif isinstance(origin, MessageOriginChat):
+        chat_id = origin.sender_chat.id
+        username = origin.sender_chat.username
+    elif isinstance(origin, MessageOriginUser):
         await update.message.reply_text(
-            "‼️ Unable to detect forwarded message source. Please forward a message from a channel or group.",
-            reply_markup=ReplyKeyboardMarkup([["🔙 Back"]], resize_keyboard=True, one_time_keyboard=True)
+            "❌ Please forward from a <b>channel/group</b>, not a user.",
+            parse_mode="HTML",
+            reply_markup=reply_markup
         )
         return POST_MSG
 
-    # Save the message id of the forwarded message
-    context.user_data["post_message_id"] = message.message_id
-
-    # Preview: re-forward the message so user sees what they are promoting
-    await update.message.reply_text("Here is a preview of the message you're promoting:")
-    try:
-        await context.bot.forward_message(
-            chat_id=update.effective_chat.id,
-            from_chat_id=context.user_data["post_chat_id"],
-            message_id=context.user_data["post_message_id"],
-        )
-    except Exception as e:
+    if not username:
         await update.message.reply_text(
-            f"❌ Could not forward the message for preview: {str(e)}",
-            reply_markup=ReplyKeyboardMarkup([["🔙 Back"]], resize_keyboard=True, one_time_keyboard=True)
+            "❌ The source channel/group needs a <b>public username</b> to generate a link.",
+            parse_mode="HTML",
+            reply_markup=reply_markup
         )
         return POST_MSG
 
+    # Store message details and generate link
+    message_id = update.message.forward_origin.message_id
+    post_link = f"https://t.me/{username}/{message_id}"
+    
+    context.user_data.update({
+        "post_link": post_link,
+        "post_source": username,
+        "post_message_id": message_id
+    })
+
+    # Show preview
+    preview_text = (
+        f"🔗 Generated Post Link:\n{post_link}\n\n"
+        "This is the link users will see and visit."
+    )
+    
     await update.message.reply_text(
-        "What is the most you want to pay per click?\n\n"
-        "Minimum Cost Per Click (CPC): 0.00006 SOL\n\n"
-        "➡️ Enter a value in SOL:",
-        reply_markup=ReplyKeyboardMarkup([["🔙 Back"]], resize_keyboard=True, one_time_keyboard=True),
+        preview_text,
+        reply_markup=reply_markup
+    )
+
+    # Proceed to CPC setting
+    await update.message.reply_text(
+        "💰 <b>Set Cost Per View (CPV)</b>\n\n"
+        "Enter the maximum amount you'll pay when someone views this post:\n\n"
+        "<i>Minimum: 0.00006 SOL\n"
+        "Recommended: 0.0001-0.001 SOL</i>",
+        parse_mode="HTML",
+        reply_markup=reply_markup
     )
     return POST_CPC
 
 async def post_views_cpc_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle CPV input"""
     cpc_text = update.message.text.strip()
+    reply_markup = ReplyKeyboardMarkup([["🔙 Back"]], resize_keyboard=True)
 
     if cpc_text.lower() == "🔙 back":
-        await update.message.reply_text("Cancelled post view ad creation.", reply_markup=ReplyKeyboardRemove())
+        await post_views_cancel_handler(update, context)
         return ConversationHandler.END
 
     try:
         cpc = float(cpc_text)
+        if cpc < 0.00006:
+            raise ValueError("Below minimum")
     except ValueError:
         await update.message.reply_text(
-            "Invalid value. Please enter a numeric value for CPC in SOL.",
-            reply_markup=ReplyKeyboardMarkup([["🔙 Back"]], resize_keyboard=True, one_time_keyboard=True)
-        )
-        return POST_CPC
-
-    if cpc < 0.00006:
-        await update.message.reply_text(
-            "Minimum CPC is 0.00006 SOL. Please enter a valid value.",
-            reply_markup=ReplyKeyboardMarkup([["🔙 Back"]], resize_keyboard=True, one_time_keyboard=True)
+            "❌ Invalid amount. Minimum is 0.00006 SOL.\n"
+            "Please enter a valid CPV:",
+            reply_markup=reply_markup
         )
         return POST_CPC
 
     context.user_data["post_cpc"] = cpc
 
-    # Fetch user's general balance from DB
+    # Get user balance
     user_id = update.effective_user.id
     with get_db_connection() as conn:
         with conn.cursor() as cursor:
-            cursor.execute("SELECT general_balance FROM clickbotusers WHERE id = %s", (user_id,))
-            result = cursor.fetchone()
-            balance = float(result[0]) if result else 0.0
+            cursor.execute(
+                "SELECT general_balance FROM clickbotusers WHERE id = %s",
+                (user_id,)
+            )
+            balance = float(cursor.fetchone()[0] or 0)
 
     context.user_data["user_balance"] = balance
 
     await update.message.reply_text(
-        f"How much do you want to spend on this campaign?\n\n"
-        f"Available balance: {balance:.8f} SOL\n\n"
-        "➡️ Enter a value in SOL:",
-        reply_markup=ReplyKeyboardMarkup([["➕ Deposit", "🔙 Back"]], resize_keyboard=True, one_time_keyboard=True),
+        f"💳 <b>Set Campaign Budget</b>\n\n"
+        f"Available Balance: {balance:.6f} SOL\n"
+        f"CPV: {cpc:.6f} SOL\n\n"
+        "Enter total amount to spend on this campaign:",
+        parse_mode="HTML",
+        reply_markup=ReplyKeyboardMarkup(
+            [["➕ Deposit", "🔙 Back"]],
+            resize_keyboard=True
+        )
     )
     return POST_BUDGET
 
-
 async def post_views_budget_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle budget input and create campaign"""
     budget_text = update.message.text.strip()
     user_balance = context.user_data.get("user_balance", 0.0)
+    reply_markup = ReplyKeyboardMarkup(
+        [["➕ Deposit", "🔙 Back"]],
+        resize_keyboard=True
+    )
 
     if budget_text.lower() == "🔙 back":
-        await update.message.reply_text("Cancelled post view ad creation.", reply_markup=ReplyKeyboardRemove())
+        await post_views_cancel_handler(update, context)
         return ConversationHandler.END
 
     if budget_text == "➕ Deposit":
@@ -1333,82 +1377,99 @@ async def post_views_budget_handler(update: Update, context: ContextTypes.DEFAUL
 
     try:
         budget = float(budget_text)
-    except ValueError:
-        await update.message.reply_text("Invalid value. Please enter a numeric value for the campaign budget in SOL.")
-        return POST_BUDGET
+        if budget > user_balance:
+            raise ValueError("Insufficient funds")
+        if budget < 0.001:
+            raise ValueError("Below minimum")
+    except ValueError as e:
+        error_msg = {
+            "Insufficient funds": f"❌ Only {user_balance:.6f} SOL available",
+            "Below minimum": "❌ Minimum budget is 0.001 SOL"
+        }.get(str(e), "❌ Invalid amount. Please enter a number")
 
-    if budget > user_balance:
         await update.message.reply_text(
-            f"❌ You do not own enough SOL for this!\nYou own: {user_balance:.8f} SOL",
-            reply_markup=ReplyKeyboardMarkup([["➕ Deposit", "🔙 Back"]], resize_keyboard=True, one_time_keyboard=True),
+            f"{error_msg}\n\nPlease enter a valid amount:",
+            reply_markup=reply_markup
         )
         return POST_BUDGET
 
-    context.user_data["post_budget"] = budget
-
+    # Save campaign to database
     user_id = update.effective_user.id
     ad_data = {
-        "chat_id": context.user_data["post_chat_id"],
-        "message_id": context.user_data["post_message_id"],
+        "link": context.user_data["post_link"],
+        "source": context.user_data["post_source"],
+        "message_id": context.user_data["post_message_id"]
     }
 
-    with get_db_connection() as conn:
-        with conn.cursor() as cursor:
-            cursor.execute(
-                """
-                INSERT INTO ads (user_id, ad_type, details, status, created_at, expires_at)
-                VALUES (%s, %s, %s, %s, now(), now() + interval '30 days')
-                RETURNING id
-                """,
-                (user_id, "post_views", json.dumps(ad_data), "running"),
-            )
-            ad_id = cursor.fetchone()[0]
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                # Create ad record
+                cursor.execute("""
+                    INSERT INTO ads 
+                    (user_id, ad_type, details, status, created_at, expires_at)
+                    VALUES (%s, %s, %s, %s, NOW(), NOW() + INTERVAL '30 days')
+                    RETURNING id
+                """, (
+                    user_id,
+                    "post_views",
+                    json.dumps(ad_data),
+                    "active"
+                ))
+                ad_id = cursor.fetchone()[0]
 
-            cursor.execute(
-                """
-                INSERT INTO post_views_ads_details (ad_id, cpc, budget, clicks, skipped)
-                VALUES (%s, %s, %s, 0, 0)
-                """,
-                (ad_id, context.user_data["post_cpc"], budget),
-            )
+                # Create ad details
+                cursor.execute("""
+                    INSERT INTO post_views_ads_details
+                    (ad_id, cpc, budget, clicks, skipped)
+                    VALUES (%s, %s, %s, 0, 0)
+                """, (
+                    ad_id,
+                    context.user_data["post_cpc"],
+                    budget
+                ))
 
-            cursor.execute(
-                "UPDATE clickbotusers SET general_balance = general_balance - %s WHERE id = %s",
-                (budget, user_id),
-            )
+                # Deduct balance
+                cursor.execute("""
+                    UPDATE clickbotusers
+                    SET general_balance = general_balance - %s
+                    WHERE id = %s
+                """, (budget, user_id))
 
-            conn.commit()
+                conn.commit()
 
-    # Build confirmation message
-    # For chat links, remove the '-100' prefix for supergroups/channels links
-    chat_id_str = str(context.user_data["post_chat_id"])
-    if chat_id_str.startswith("-100"):
-        tg_chat_id = chat_id_str[4:]
-    else:
-        tg_chat_id = chat_id_str
+        # Build confirmation message
+        message = (
+            "🎉 <b>Post Views Campaign Created!</b>\n\n"
+            f"<b>ID:</b> #{ad_id}\n"
+            f"<b>Post Link:</b> {context.user_data['post_link']}\n"
+            f"<b>CPV:</b> {context.user_data['post_cpc']:.6f} SOL\n"
+            f"<b>Budget:</b> {budget:.6f} SOL\n\n"
+            "🔄 Campaign will be active shortly\n"
+            "📊 Monitor performance in <b>My Ads</b>"
+        )
 
-    message = (
-        f"⚙️ Campaign #{ad_id} - 📃 Post views promotion\n\n"
-        f"🔗 URL: https://t.me/c/{tg_chat_id}/{context.user_data['post_message_id']}\n\n"
-        f"Status: ▶️ Ongoing\n"
-        f"CPC: {context.user_data['post_cpc']:.8f} SOL\n"
-        f"Budget: {context.user_data['post_budget']:.8f} SOL\n"
-        f"Total Clicks: 0 clicks\n"
-        f"Skipped: 0 times\n\n"
-        "___________________________"
-    )
+        await update.message.reply_text(
+            message,
+            parse_mode="HTML",
+            disable_web_page_preview=True,
+            reply_markup=ReplyKeyboardMarkup(REPLY_KEYBOARD, resize_keyboard=True)
+        )
 
-    await update.message.reply_text(message, reply_markup=ReplyKeyboardRemove())
+    except Exception as e:
+        await update.message.reply_text(
+            f"❌ Failed to create campaign: {str(e)}",
+            reply_markup=reply_markup
+        )
+        return POST_BUDGET
 
-    # Return to main menu or other function
-    await start(update, context)
     return ConversationHandler.END
-
 
 async def post_views_cancel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Operation cancelled.", reply_markup=ReplyKeyboardRemove())
     await start(update, context)
     return ConversationHandler.END
+
 
 # Define conversation states
 LINK_URL, LINK_TITLE, LINK_DESCRIPTION, LINK_CPC, LINK_BUDGET = range(5)
@@ -2034,27 +2095,9 @@ def main():
     post_views_conv_handler = ConversationHandler(
         entry_points=[MessageHandler(filters.Regex("^📃 Post Views$"), post_views_start)],
         states={
-            POST_MSG: [
-                MessageHandler(
-                    filters.ALL & ~filters.COMMAND & ~filters.Regex("^🔙 Back$"),
-                    post_views_message_handler
-                ),
-                MessageHandler(filters.Regex("^🔙 Back$"), post_views_cancel_handler)
-            ],
-            POST_CPC: [
-                MessageHandler(
-                    filters.TEXT & ~filters.COMMAND & ~filters.Regex("^🔙 Back$"),
-                    post_views_cpc_handler
-                ),
-                MessageHandler(filters.Regex("^🔙 Back$"), post_views_cancel_handler)
-            ],
-            POST_BUDGET: [
-                MessageHandler(
-                    filters.TEXT & ~filters.COMMAND & ~filters.Regex("^🔙 Back$"),
-                    post_views_budget_handler
-                ),
-                MessageHandler(filters.Regex("^🔙 Back$"), post_views_cancel_handler)
-            ],
+            POST_MSG: [MessageHandler(filters.ALL & ~filters.COMMAND, post_views_message_handler)],
+            POST_CPC: [MessageHandler(filters.TEXT & ~filters.COMMAND, post_views_cpc_handler)],
+            POST_BUDGET: [MessageHandler(filters.TEXT & ~filters.COMMAND, post_views_budget_handler)],
         },
         fallbacks=[CommandHandler("cancel", post_views_cancel_handler)],
     )
@@ -2114,8 +2157,6 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
 
 
 
