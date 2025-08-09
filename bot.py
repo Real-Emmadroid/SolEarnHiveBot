@@ -1420,7 +1420,7 @@ async def post_views_budget_handler(update: Update, context: ContextTypes.DEFAUL
 
                 # Create ad details
                 cursor.execute("""
-                    INSERT INTO post_views_ads_details
+                    INSERT INTO post_view_ads_details
                     (ad_id, cpc, budget, clicks, skipped)
                     VALUES (%s, %s, %s, 0, 0)
                 """, (
@@ -1440,13 +1440,14 @@ async def post_views_budget_handler(update: Update, context: ContextTypes.DEFAUL
 
         # Build confirmation message
         message = (
-            "🎉 <b>Post Views Campaign Created!</b>\n\n"
-            f"<b>ID:</b> #{ad_id}\n"
+            f"⚙️ Campaign #{ad_id} - 📃 Post views promotion\n\n"
             f"<b>Post Link:</b> {context.user_data['post_link']}\n"
-            f"<b>CPV:</b> {context.user_data['post_cpc']:.6f} SOL\n"
+            f"Status: ▶️ Ongoing\n"
+            f"<b>CPC:</b> {context.user_data['post_cpc']:.6f} SOL\n"
             f"<b>Budget:</b> {budget:.6f} SOL\n\n"
-            "🔄 Campaign will be active shortly\n"
-            "📊 Monitor performance in <b>My Ads</b>"
+            f"Total Clicks: 0 clicks\n"
+            f"Skipped: 0 times\n\n"
+            "___________________________"
         )
 
         await update.message.reply_text(
@@ -2157,6 +2158,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
