@@ -47,7 +47,7 @@ def init_databases():
             ''')
 
             cursor.execute('''
-                CREATE TABLE NOT EXISTS channel_ads_details (
+                CREATE TABLE IF NOT EXISTS channel_ads_details (
                     ad_id BIGINT PRIMARY KEY REFERENCES ads(id) ON DELETE CASCADE,
                     title TEXT NOT NULL,
                     description TEXT NOT NULL,
@@ -214,6 +214,7 @@ def with_retry(max_attempts=3, delay=0.5):
 if __name__ == "__main__":
     init_databases()
     print("Databases initialized in Supabase PostgreSQL database.")
+
 
 
 
