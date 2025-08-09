@@ -1141,13 +1141,11 @@ def run():
 t = threading.Thread(target=run)
 t.start()
 
-# Main Function
 def main():
     application = ApplicationBuilder().token(TOKEN).build()
-    # Add message handlers
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, unified_message_handler))
     application.add_error_handler(error_handler)
 
+    # 1. Create conversation handlers FIRST
     withdraw_conv_handler = ConversationHandler(
         entry_points=[MessageHandler(filters.Regex("^➖ Withdraw$"), start_withdraw)],
         states={
@@ -1166,15 +1164,24 @@ def main():
 
     channel_ad_conv_handler = ConversationHandler(
         entry_points=[
-            # Add MessageHandler for button click
             MessageHandler(filters.Regex("^📣 Channel or Group$"), channel_ad_start)
         ],
         states={
-            CHANNEL_USERNAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, channel_username_handler)],
-            CHANNEL_TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, channel_title_handler)],
-            CHANNEL_DESCRIPTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, channel_description_handler)],
-            CHANNEL_CPC: [MessageHandler(filters.TEXT & ~filters.COMMAND, channel_cpc_handler)],
-            CHANNEL_BUDGET: [MessageHandler(filters.TEXT & ~filters.COMMAND, channel_budget_handler)],
+            CHANNEL_USERNAME: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, channel_username_handler)
+            ],
+            CHANNEL_TITLE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, channel_title_handler)
+            ],
+            CHANNEL_DESCRIPTION: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, channel_description_handler)
+            ],
+            CHANNEL_CPC: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, channel_cpc_handler)
+            ],
+            CHANNEL_BUDGET: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, channel_budget_handler)
+            ],
         },
         fallbacks=[CommandHandler("cancel", cancel_handler)]
     )
@@ -1190,37 +1197,31 @@ def main():
         fallbacks=[CommandHandler("cancel", cancel_deposit)],
     )
 
+    # 2. Add conversation handlers BEFORE other handlers
     application.add_handler(withdraw_conv_handler)
     application.add_handler(channel_ad_conv_handler)
     application.add_handler(deposit_conv_handler)
    
-   
-   
-    # Add command handlers
+    # 3. Add command handlers
     handlers = [
-        ("start", start),
-        ("help", help_command),
-        ("broadcast", broadcast),
-        ("balance", balance_command),
-        ("withdraw", start_withdraw),
-        ("deposit", start_deposit),
-        ("newad", newad_start),
-        ("promo", broadcast_command),
+        CommandHandler("start", start),
+        CommandHandler("help", help_command),
+        CommandHandler("balance", balance_command),
+        CommandHandler("withdraw", start_withdraw),
+        CommandHandler("deposit", start_deposit),
+        CommandHandler("newad", newad_start),
     ]
-    for command, handler in handlers:
-        application.add_handler(CommandHandler(command, handler))
+    for handler in handlers:
+        application.add_handler(handler)
 
-     
-    # Add callback handlers
+    # 4. Add callback handler
     application.add_handler(CallbackQueryHandler(callback_query_handler))
-   
     
+    # 5. Add unified message handler LAST
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, unified_message_handler))
 
     # Run the bot
     application.run_polling()
-
-if __name__ == "__main__":
-    main()
 
 
 
