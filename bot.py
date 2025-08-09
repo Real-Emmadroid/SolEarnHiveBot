@@ -421,16 +421,16 @@ async def cancel_deposit(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 ASK_WALLET, ASK_WITHDRAW_AMOUNT = range(2)
 
-# Step 1: Entry point when user clicks ➖ Withdraw
 async def start_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user = get_user(user_id)
     wallet_address = user.get("wallet_address")
 
-    # Keyboard for canceling
+    # Reply keyboard for canceling withdrawal
     reply_markup = ReplyKeyboardMarkup([["🔙 Cancel"]], resize_keyboard=True)
 
     if not wallet_address:
+        # Show inline button to set wallet
         keyboard = [[InlineKeyboardButton("➕ Set / Change Wallet", callback_data="set_wallet")]]
         await update.message.reply_text(
             "⚠️ You have not set a withdrawal wallet address.",
@@ -442,14 +442,16 @@ async def start_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if payout_balance < MIN_WITHDRAW:
         await update.message.reply_text(
             f"❌ You must have at least {MIN_WITHDRAW} SOL to withdraw.\n"
-            f"💰 Current balance: {payout_balance:.6f} SOL"
+            f"💰 Current balance: {payout_balance:.6f} SOL",
+            reply_markup=ReplyKeyboardRemove()
         )
         return ConversationHandler.END
 
     await update.message.reply_text(
         f"💳 Your withdrawal wallet is:\n`{wallet_address}`\n\n"
         "Enter the amount of SOL you wish to withdraw:",
-        parse_mode="Markdown"
+        parse_mode="Markdown",
+        reply_markup=reply_markup
     )
     return ASK_WITHDRAW_AMOUNT
 
@@ -552,6 +554,7 @@ async def cancel_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def referrals_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    user_id = user.id 
     bot_username = (await context.bot.get_me()).username
 
     with get_db_connection() as conn:
@@ -916,6 +919,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
