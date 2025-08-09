@@ -324,14 +324,8 @@ async def unified_message_handler(update: Update, context: ContextTypes.DEFAULT_
     text = update.message.text
     user_id = update.effective_user.id
 
-    if text == "➕ Deposit":
-        await start_deposit(update, context)
-
-    elif text == "💰 Balance":
+    if text == "💰 Balance":
         await balance_command (update, context)
-
-    elif text == "➖ Withdraw":
-        await start_withdraw (update, context)
 
     elif text == "🙌 Referrals":
         await referrals_command (update, context)
@@ -924,6 +918,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
