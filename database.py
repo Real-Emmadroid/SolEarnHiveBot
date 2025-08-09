@@ -74,7 +74,8 @@ def get_user(user_id: int) -> dict:
                 'id': row[0],
                 'general_balance': row[1],
                 'payout_balance': row[2],
-                'deposit_address': row[3]
+                'deposit_address': row[3],
+                'wallet_address': row[4]
             }
 
 def update_balances(user_id: int, general: float = None, payout: float = None):
@@ -187,6 +188,7 @@ def with_retry(max_attempts=3, delay=0.5):
 if __name__ == "__main__":
     init_databases()
     print("Databases initialized in Supabase PostgreSQL database.")
+
 
 
 
