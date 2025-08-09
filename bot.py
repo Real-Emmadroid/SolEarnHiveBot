@@ -295,7 +295,7 @@ async def unified_message_handler(update: Update, context: ContextTypes.DEFAULT_
         await balance_command (update, context)
 
     elif text == "➖ Withdraw":
-        await handle_withdraw (update, context)
+        await start_withdraw (update, context)
 
     elif text == "📜 History":
         await update.message.reply_text("🛠 Transaction history will show here.")
@@ -800,7 +800,7 @@ def main():
         ("help", help_command),
         ("broadcast", broadcast),
         ("balance", balance_command),
-        ("withdraw", handle_withdraw),
+        ("withdraw", start_withdraw),
         ("promo", broadcast_command),
     ]
     for command, handler in handlers:
@@ -819,6 +819,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
