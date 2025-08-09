@@ -406,8 +406,6 @@ async def process_deposit_amount(update: Update, context: ContextTypes.DEFAULT_T
             reply_markup=reply_markup
         )
 
-    return ConversationHandler.END
-
 
 async def cancel_deposit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -541,8 +539,6 @@ async def process_withdraw_amount(update: Update, context: ContextTypes.DEFAULT_
         chat_id=CREATOR_ID,
         text=f"🔔 New withdrawal request\nUser ID: {user_id}\nAmount: {amount} SOL\nAddress: {wallet_address}"
     )
-
-    return ConversationHandler.END
 
 async def cancel_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("❌ Withdrawal process canceled.")
@@ -1237,6 +1233,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
