@@ -339,7 +339,7 @@ async def unified_message_handler(update: Update, context: ContextTypes.DEFAULT_
     elif text == "🔙 Back":
         await start(update, context)
     else:
-        await start(update, context) 
+        await update.message.reply_text("🛠 Transaction history will show here.")
 
 
 async def handle_convert(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -918,6 +918,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
