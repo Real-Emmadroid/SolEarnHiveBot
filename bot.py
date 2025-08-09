@@ -664,15 +664,7 @@ async def newad_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, reply_markup=promo_type_markup)
 
 
-# States
-(
-    CHANNEL_USERNAME,
-    CHANNEL_TITLE,
-    CHANNEL_DESCRIPTION,
-    CHANNEL_CPC,
-    CHANNEL_BUDGET,
-) = range(5)
-
+CHANNEL_USERNAME, CHANNEL_TITLE, CHANNEL_DESCRIPTION, CHANNEL_CPC, CHANNEL_BUDGET = range(5)
 
 async def channel_ad_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [["🔙 Back"]]
@@ -1232,6 +1224,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
