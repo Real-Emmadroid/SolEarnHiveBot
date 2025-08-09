@@ -432,14 +432,16 @@ async def start_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = get_user(user_id)
     wallet_address = user.get("wallet_address")
 
+    # Keyboard for canceling
+    reply_markup = ReplyKeyboardMarkup([["🔙 Back"]], resize_keyboard=True)
+
     if not wallet_address:
-        # Ask user to set wallet first
         keyboard = [[InlineKeyboardButton("➕ Set / Change Wallet", callback_data="set_wallet")]]
         await update.message.reply_text(
             "⚠️ You have not set a withdrawal wallet address.",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
-        return ASK_WALLET  # Keep conversation alive for wallet setup
+        return ASK_WALLET
 
     payout_balance = float(user["payout_balance"])
     if payout_balance < MIN_WITHDRAW:
@@ -860,13 +862,15 @@ def main():
         states={
             ASK_WALLET: [
                 CallbackQueryHandler(withdraw_button_handler, pattern="^set_wallet$"),
+                MessageHandler(filters.Regex("^🔙 Back$"), cancel_withdraw),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, process_wallet_address)
             ],
             ASK_WITHDRAW_AMOUNT: [
+                MessageHandler(filters.Regex("^🔙 Back$"), cancel_withdraw),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, process_withdraw_amount)
             ]
         },
-        fallbacks=[],
+        fallbacks=[MessageHandler(filters.Regex("^🔙 Back$"), cancel_withdraw)],
     )
 
 
@@ -906,6 +910,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
