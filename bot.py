@@ -385,31 +385,103 @@ async def cancel_deposit(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
+ASK_WALLET = 1
+ASK_WITHDRAW_AMOUNT = 2
+
+# ---------- START WITHDRAW ----------
 async def handle_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    args = update.message.text.split()
+    user = get_user(user_id)
+    wallet_address = user.get("wallet_address")
 
-    if len(args) != 3:
-        await update.message.reply_text("Usage: /withdraw <amount> <wallet_address>")
-        return
+    if not wallet_address:
+        # Wallet not set → ask to set
+        keyboard = [[InlineKeyboardButton("➕ Set / Change Wallet", callback_data="set_wallet")]]
+        await update.message.reply_text(
+            "⚠️ You have not set a withdrawal wallet address.",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return ConversationHandler.END
+
+    # Wallet exists → check balance
+    payout_balance = float(user["payout_balance"])
+    if payout_balance < MIN_WITHDRAW:
+        await update.message.reply_text(
+            f"❌ You must have at least {MIN_WITHDRAW} SOL to withdraw.\n"
+            f"💰 Current balance: {payout_balance:.6f} SOL"
+        )
+        return ConversationHandler.END
+
+    await update.message.reply_text(
+        f"💳 Your withdrawal wallet is:\n`{wallet_address}`\n\n"
+        "Enter the amount of SOL you wish to withdraw:",
+        parse_mode="Markdown",
+        reply_markup=ReplyKeyboardRemove()
+    )
+    return ASK_WITHDRAW_AMOUNT
+
+
+# ---------- INLINE BUTTON HANDLER ----------
+async def withdraw_button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    if query.data == "set_wallet":
+        await query.edit_message_text(
+            "📩 SEND ME YOUR SOLANA WALLET ADDRESS to use for future withdrawals.\n\n"
+            "✅ Make sure it's correct — this will be saved in your account."
+        )
+        return ASK_WALLET
+
+
+# ---------- PROCESS WALLET ADDRESS ----------
+async def process_wallet_address(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    wallet_address = update.message.text.strip()
+
+    # Basic validation
+    if len(wallet_address) < 20:
+        await update.message.reply_text("❌ Invalid address. Please send a valid Solana address.")
+        return ASK_WALLET
+
+    with get_db_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                UPDATE clickbotusers SET wallet_address = %s WHERE id = %s
+            """, (wallet_address, user_id))
+            conn.commit()
+
+    await update.message.reply_text(
+        f"✅ Wallet address saved:\n`{wallet_address}`",
+        parse_mode="Markdown"
+    )
+    return ConversationHandler.END
+
+
+# ---------- PROCESS WITHDRAWAL AMOUNT ----------
+async def process_withdraw_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    text = update.message.text.strip()
 
     try:
-        amount = float(args[1])
-        address = args[2]
-    except:
-        await update.message.reply_text("❌ Invalid amount or address.")
-        return
+        amount = float(text)
+        if amount <= 0:
+            raise ValueError
+    except ValueError:
+        await update.message.reply_text("❌ Please enter a valid withdrawal amount.")
+        return ASK_WITHDRAW_AMOUNT
 
     user = get_user(user_id)
-    payout_balance = float(user['payout_balance'])
+    payout_balance = float(user["payout_balance"])
+    wallet_address = user["wallet_address"]
 
     if amount < MIN_WITHDRAW:
-        await update.message.reply_text(f"❌ Minimum withdraw is {MIN_WITHDRAW} SOL")
-        return
+        await update.message.reply_text(f"❌ Minimum withdrawal is {MIN_WITHDRAW} SOL")
+        return ASK_WITHDRAW_AMOUNT
 
     if amount > payout_balance:
         await update.message.reply_text("❌ Insufficient payout balance.")
-        return
+        return ASK_WITHDRAW_AMOUNT
 
     # Deduct balance
     new_balance = payout_balance - amount
@@ -421,21 +493,22 @@ async def handle_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
             cursor.execute("""
                 INSERT INTO withdrawals (user_id, amount, address, status)
                 VALUES (%s, %s, %s, %s)
-            """, (user_id, amount, address, 'pending'))
+            """, (user_id, amount, wallet_address, "pending"))
             conn.commit()
 
     await update.message.reply_text(
-        f"✅ Withdrawal request submitted:\n💸 *{amount:.6f} SOL* to `{address}`\n\n⏳ Awaiting manual processing.",
+        f"✅ Withdrawal request submitted:\n💸 *{amount:.6f} SOL* to `{wallet_address}`\n\n⏳ Awaiting manual processing.",
         parse_mode="Markdown"
     )
 
     # Optional: notify admin
-    admin_chat_id = YOUR_ADMIN_CHAT_ID  # Replace
+    admin_chat_id = CREATOR_ID
     await context.bot.send_message(
         chat_id=admin_chat_id,
-        text=f"🔔 New withdrawal request\nUser ID: {user_id}\nAmount: {amount} SOL\nAddress: {address}"
+        text=f"🔔 New withdrawal request\nUser ID: {user_id}\nAmount: {amount} SOL\nAddress: {wallet_address}"
     )
 
+    return ConversationHandler.END
         
 
 async def ultstat(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -704,6 +777,20 @@ def main():
     application = ApplicationBuilder().token(TOKEN).build()
     application.add_error_handler(error_handler)
 
+    withdraw_handler = ConversationHandler(
+        entry_points=[MessageHandler(filters.Regex("^➖ Withdraw$"), handle_withdraw)],
+        states={
+            ASK_WALLET: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_wallet_address)],
+            ASK_WITHDRAW_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_withdraw_amount)]
+        },
+        fallbacks=[],
+        map_to_parent={}
+    )
+
+    dispatcher.add_handler(CallbackQueryHandler(withdraw_button_handler, pattern="set_wallet"))
+    dispatcher.add_handler(withdraw_handler)
+
+
     deposit_conv_handler = ConversationHandler(
         entry_points=[MessageHandler(filters.Regex("^➕ Deposit$"), start_deposit)],
         states={
@@ -739,6 +826,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
