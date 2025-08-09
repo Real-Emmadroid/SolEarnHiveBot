@@ -2073,7 +2073,7 @@ def main():
             LINK_CPC: [MessageHandler(filters.TEXT & ~filters.COMMAND, link_cpc_handler)],
             LINK_BUDGET: [MessageHandler(filters.TEXT & ~filters.COMMAND, link_budget_handler)],
         },
-        fallbacks=CommandHandler("cancel", link_cancel_handler)],
+        fallbacks=[CommandHandler("cancel", link_cancel_handler)],
     )
 
 
@@ -2119,29 +2119,6 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
