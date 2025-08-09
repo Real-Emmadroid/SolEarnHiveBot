@@ -398,7 +398,7 @@ async def process_deposit_amount(update: Update, context: ContextTypes.DEFAULT_T
             f"You can pay in any crypto of your choice:\n\n{result['invoice_url']}\n\n"
             f"💡 Payment in other cryptocurrencies will be automatically converted into SOL",
             parse_mode="Markdown",
-            reply_markup=ReplyKeyboardRemove()
+            reply_markup=reply_markup
         )
     else:
         await update.message.reply_text(
@@ -410,7 +410,7 @@ async def process_deposit_amount(update: Update, context: ContextTypes.DEFAULT_T
 async def cancel_deposit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "❌ Deposit process canceled.",
-        reply_markup=ReplyKeyboardRemove()
+        reply_markup=reply_markup
     )
     # Go back to start menu
     await start(update, context)
@@ -1233,6 +1233,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
