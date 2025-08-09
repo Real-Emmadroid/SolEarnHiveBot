@@ -1181,6 +1181,7 @@ def main():
         },
         fallbacks=[CommandHandler("cancel", cancel_handler)],
     )
+    application.add_handler(channel_ad_conv_handler)
 
 
     deposit_conv_handler = ConversationHandler(
@@ -1195,7 +1196,7 @@ def main():
     )
     application.add_handler(deposit_conv_handler)
     application.add_handler(withdraw_conv_handler)
-    application.add_handler(channel_ad_conv_handler)
+   
    
    
     # Add command handlers
@@ -1224,6 +1225,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
