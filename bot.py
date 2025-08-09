@@ -329,6 +329,9 @@ async def unified_message_handler(update: Update, context: ContextTypes.DEFAULT_
     elif text == "🔁 Convert":
         await handle_convert(update, context)
 
+    elif text == "⚙ Settingst":
+        await settings_command(update, context)
+
     elif text == "🔙 Back":
         await start(update, context)
     else:
@@ -928,6 +931,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
