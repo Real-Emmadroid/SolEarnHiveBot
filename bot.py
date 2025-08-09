@@ -35,6 +35,7 @@ from database import (
 # Configuration
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
+WEBHOOK_URL = "https://solearnhivebot.onrender.com/webhook"
 
 CREATOR_ID = 7112609512  # Replace with your actual Telegram user ID
 BOT_USERNAME = "solearnhivebot"
@@ -511,6 +512,7 @@ def register_handlers(app_obj):
         persistent=False
     )
     app_obj.add_handler(withdraw_conv)
+    application = Application.builder().token(BOT_TOKEN).build()
 
     # simple commands & handlers
     app_obj.add_handler(CommandHandler("start", start))
@@ -522,6 +524,14 @@ def register_handlers(app_obj):
 
 # register handlers to application
 register_handlers(application)
+
+# Initialize and start Application before Flask starts
+async def init_bot():
+    await application.initialize()
+    await application.start()
+    await application.bot.delete_webhook()
+    await application.bot.set_webhook(WEBHOOK_URL)
+    logger.info("Webhook set to %s", WEBHOOK_URL)
 
 # ----------------- WEBHOOK route -----------------
 @app.route('/webhook', methods=['POST'])
@@ -536,30 +546,10 @@ def webhook_entry():
     return "OK", 200
 
 
-# At the bottom of bot.py before set_hook()
-async def init_bot():
-    await application.initialize()   # <-- This initializes handlers, context, etc.
-    await application.start()        # Starts any background jobs
-    await application.bot.delete_webhook()
-    await application.bot.set_webhook(WEBHOOK_URL)
-    logger.info("Webhook set to %s", WEBHOOK_URL)
-
-# Run init once at startup
-asyncio.run(init_bot())
-
-
 # ----------------- STARTUP: set webhook and run Flask -----------------
 if __name__ == "__main__":
-    # set webhook
-    async def set_hook():
-        # remove previous webhook and set new one
-        await application.bot.delete_webhook()
-        await application.bot.set_webhook(WEBHOOK_URL)
-        logger.info("Webhook set to %s", WEBHOOK_URL)
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(init_bot())
+    app.run(host="0.0.0.0", port=8080)
 
-    asyncio.run(set_hook())
-
-    # Start Flask (Render binds the port)
-    port = int(os.getenv("PORT", "8080"))
-    app.run(host="0.0.0.0", port=port)
 
