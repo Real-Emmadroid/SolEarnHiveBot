@@ -49,7 +49,7 @@ def init_databases():
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS channel_ads_details (
                     id SERIAL PRIMARY KEY,
-                    ad_id BIGINT PRIMARY KEY REFERENCES ads(id) ON DELETE CASCADE,
+                    ad_id BIGINT NOT NULL REFERENCES ads(id) ON DELETE CASCADE,
                     title TEXT NOT NULL,
                     description TEXT NOT NULL,
                     cpc NUMERIC(18,8) NOT NULL CHECK (cpc >= 0),
@@ -64,7 +64,7 @@ def init_databases():
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS bot_ads_details (
                     id SERIAL PRIMARY KEY,
-                    ad_id BIGINT PRIMARY KEY REFERENCES ads(id) ON DELETE CASCADE,
+                    ad_id BIGINT NOT NULL REFERENCES ads(id) ON DELETE CASCADE,
                     title TEXT NOT NULL,
                     description TEXT NOT NULL,
                     cpc NUMERIC(18,8) NOT NULL CHECK (cpc >= 0),
@@ -79,7 +79,7 @@ def init_databases():
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS link_ads_details (
                     id SERIAL PRIMARY KEY,
-                    ad_id BIGINT PRIMARY KEY REFERENCES ads(id) ON DELETE CASCADE,
+                    ad_id BIGINT NOT NULL REFERENCES ads(id) ON DELETE CASCADE,
                     title TEXT NOT NULL,
                     description TEXT NOT NULL,
                     cpc NUMERIC(18,8) NOT NULL CHECK (cpc >= 0),
@@ -94,7 +94,7 @@ def init_databases():
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS post_view_ads_details (
                     id SERIAL PRIMARY KEY,
-                    ad_id BIGINT PRIMARY KEY REFERENCES ads(id) ON DELETE CASCADE,
+                    ad_id BIGINT NOT NULL REFERENCES ads(id) ON DELETE CASCADE,
                     cpc NUMERIC(18,8) NOT NULL CHECK (cpc >= 0),
                     budget NUMERIC(18,8) NOT NULL CHECK (budget >= 0),
                     clicks BIGINT DEFAULT 0 CHECK (clicks >= 0),
@@ -258,6 +258,7 @@ def with_retry(max_attempts=3, delay=0.5):
 if __name__ == "__main__":
     init_databases()
     print("Databases initialized in Supabase PostgreSQL database.")
+
 
 
 
