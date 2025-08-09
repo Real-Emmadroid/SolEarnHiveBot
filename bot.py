@@ -558,16 +558,33 @@ async def referrals_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     referral_link = f"https://t.me/{bot_username}?start={user_id}"
 
+    # Share message template
+    share_text = (
+        "🎙 Click2Earn With SOL EarnHive!\n\n"
+        "Earn CRYPTO based on your social media activity — Viewing, liking, commenting, or joining TG channels. 🌍\n\n"
+        "→ #dotask2earn\n→ #startbot2earn\n→ #comment2earn\n→ #like2earn\n→ #follow2earn\n→ #click2earn\n\n"
+        "PS: You can also create your own tasks and reward others to complete them.\n\n"
+        f"Start using SOL EarnHive today!\n\n{referral_link} 👈"
+    )
+
+    share_url = f"https://t.me/share/url?url={referral_link}&text={share_text.replace(' ', '+')}"
+
+    # Inline button for sharing
+    keyboard = [
+        [InlineKeyboardButton("📤 Share", url=share_url)]
+    ]
+
     text = (
         f"🔍 You have *{total_refs}* referrals, and earned *{payout_balance:.6f} SOL*.\n\n"
         f"To refer people to the bot, send them this link:\n"
-        f"{referral_link}\n\n"
+        f"`{referral_link}`\n\n"
         "💰 You will earn 15% of your friends' earnings from tasks, "
         "and 2% if your friend deposits.\n\n"
         "_You can withdraw affiliate income or spend it on ADS!_"
     )
 
-    await update.message.reply_text(text, parse_mode="Markdown")
+    await update.message.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+
 
         
 
@@ -888,6 +905,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
