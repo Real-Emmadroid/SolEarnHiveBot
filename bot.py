@@ -54,7 +54,6 @@ def create_payment(user_id, amount_sol):
     data = {
         "price_amount": amount_sol,
         "price_currency": "SOL",         # Amount in SOL
-        "pay_currency": "any",           # Allow any coin as input
         "order_id": f"user_{user_id}",
         "order_description": f"Deposit for user {user_id}",
         # Optional: "ipn_callback_url": "https://yourdomain.com/ipn"
@@ -310,7 +309,7 @@ async def unified_message_handler(update: Update, context: ContextTypes.DEFAULT_
     elif text == "🔙 Back":
         await start(update, context)
     else:
-        await update.message.reply_text("❓ Unrecognized option.")
+        await await start(update, context)
 
 
 async def handle_convert(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -331,12 +330,18 @@ async def handle_convert(update: Update, context: ContextTypes.DEFAULT_TYPE):
 ASK_DEPOSIT_AMOUNT = 1
 
 async def start_deposit(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Keyboard with "🔙 Back" button
+    reply_markup = ReplyKeyboardMarkup(
+        [["🔙 Back"]],
+        resize_keyboard=True
+    )
+
     await update.message.reply_text(
-        "💸 How much SOL would you like to deposit?\n\nPlease enter the amount (e.g., `2.5`):",
-        parse_mode="Markdown"
+        "💸 How much SOL would you like to deposit?\n\nPlease enter the amount (e.g. `0.5`):",
+        parse_mode="Markdown",
+        reply_markup=reply_markup
     )
     return ASK_DEPOSIT_AMOUNT
-
 
 async def process_deposit_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -724,6 +729,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
