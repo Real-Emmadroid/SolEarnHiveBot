@@ -512,7 +512,7 @@ def register_handlers(app_obj):
         persistent=False
     )
     app_obj.add_handler(withdraw_conv)
-    application = Application.builder().token(BOT_TOKEN).build()
+    application = Application.builder().token(TOKEN).build()
 
     # simple commands & handlers
     app_obj.add_handler(CommandHandler("start", start))
@@ -551,5 +551,6 @@ if __name__ == "__main__":
     loop = asyncio.get_event_loop()
     loop.run_until_complete(init_bot())
     app.run(host="0.0.0.0", port=8080)
+
 
 
