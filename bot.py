@@ -36,6 +36,7 @@ from database import (
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 WEBHOOK_URL = "https://solearnhivebot.onrender.com/webhook"
+BOT_LOOP = None
 
 CREATOR_ID = 7112609512  # Replace with your actual Telegram user ID
 BOT_USERNAME = "solearnhivebot"
@@ -538,22 +539,18 @@ async def init_bot():
 def webhook_entry():
     try:
         update = Update.de_json(request.get_json(force=True), application.bot)
-        
-        # Schedule processing in the bot's main asyncio loop
-        asyncio.run_coroutine_threadsafe(
-            application.process_update(update),
-            application.loop  # Use the loop from the Application instance
-        )
+        asyncio.run_coroutine_threadsafe(application.process_update(update), BOT_LOOP)
     except Exception as e:
         app.logger.error(f"Failed to process webhook update: {e}", exc_info=True)
     return "OK", 200
 
 
 
+
 # ----------------- STARTUP: set webhook and run Flask -----------------
 if __name__ == "__main__":
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(init_bot())
+    BOT_LOOP = asyncio.get_event_loop()
+    BOT_LOOP.run_until_complete(init_bot())
     app.run(host="0.0.0.0", port=8080)
 
 
