@@ -320,33 +320,26 @@ async def unified_message_handler(update: Update, context: ContextTypes.DEFAULT_
     user_id = update.effective_user.id
 
     if text == "💰 Balance":
-        await balance_command (update, context)
-
+        await balance_command(update, context)
     elif text == "🙌 Referrals":
-        await referrals_command (update, context)
-
+        await referrals_command(update, context)
     elif text == "📜 History":
         await update.message.reply_text("🛠 Transaction history will show here.")
-
     elif text == "🔁 Convert":
         await handle_convert(update, context)
-
     elif text == "⚙ Settings":
         await settings_command(update, context)
-
     elif text == "📊 My Ads":
         await my_ads(update, context)
-
     elif text == "➕ New Ad ➕":
         await newad_start(update, context)
-
-    elif text == "📣 Channel or Group":
-        await channel_ad_start(update, context)
-
+    elif text == "➕ Deposit":
+        await start_deposit(update, context)
+    elif text == "➖ Withdraw":
+        await start_withdraw(update, context)
     elif text == "🔙 Back":
         await start(update, context)
-    else:
-        await start(update, context) 
+    # DO NOT add a final else clause 
 
 
 async def handle_convert(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1151,6 +1144,8 @@ t.start()
 # Main Function
 def main():
     application = ApplicationBuilder().token(TOKEN).build()
+    # Add message handlers
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, unified_message_handler))
     application.add_error_handler(error_handler)
 
     withdraw_conv_handler = ConversationHandler(
@@ -1170,7 +1165,10 @@ def main():
     )
 
     channel_ad_conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("channel_ad_start", channel_ad_start)],
+        entry_points=[
+            # Add MessageHandler for button click
+            MessageHandler(filters.Regex("^📣 Channel or Group$"), channel_ad_start)
+        ],
         states={
             CHANNEL_USERNAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, channel_username_handler)],
             CHANNEL_TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, channel_title_handler)],
@@ -1178,7 +1176,7 @@ def main():
             CHANNEL_CPC: [MessageHandler(filters.TEXT & ~filters.COMMAND, channel_cpc_handler)],
             CHANNEL_BUDGET: [MessageHandler(filters.TEXT & ~filters.COMMAND, channel_budget_handler)],
         },
-        fallbacks=[CommandHandler("cancel", cancel_handler)],
+        fallbacks=[CommandHandler("cancel", cancel_handler)]
     )
 
     deposit_conv_handler = ConversationHandler(
@@ -1205,15 +1203,14 @@ def main():
         ("broadcast", broadcast),
         ("balance", balance_command),
         ("withdraw", start_withdraw),
+        ("deposit", start_deposit),
         ("newad", newad_start),
         ("promo", broadcast_command),
     ]
     for command, handler in handlers:
         application.add_handler(CommandHandler(command, handler))
 
-    # Add message handlers
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, unified_message_handler))
-    
+     
     # Add callback handlers
     application.add_handler(CallbackQueryHandler(callback_query_handler))
    
@@ -1224,6 +1221,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
