@@ -30,6 +30,7 @@ def init_databases():
                     general_balance NUMERIC DEFAULT 0,
                     payout_balance NUMERIC DEFAULT 0,
                     wallet_address TEXT,
+                    referral_id BIGINT,
                     deposit_address TEXT
                 );
             ''')
@@ -124,6 +125,42 @@ def convert_earnings_to_general(user_id: int) -> tuple[bool, float]:
             return True, payout
 
 
+def add_referral_deposit_bonus(user_id, deposit_amount):
+    with get_db_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT referral_id FROM clickbotusers WHERE user_id = %s", (user_id,))
+            referrer = cursor.fetchone()
+            if not referrer or not referrer[0]:
+                return
+            referrer_id = referrer[0]
+
+            bonus = deposit_amount * 0.02  # 2% bonus
+            cursor.execute("""
+                UPDATE users
+                SET payout_balance = payout_balance + %s
+                WHERE user_id = %s
+            """, (bonus, referrer_id))
+            conn.commit()
+
+
+def add_referral_task_bonus(user_id, earning_amount):
+    with get_db_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT referral_id FROM clickbotusers WHERE user_id = %s", (user_id,))
+            referrer = cursor.fetchone()
+            if not referrer or not referrer[0]:
+                return
+            referrer_id = referrer[0]
+
+            bonus = earning_amount * 0.15  # 15% bonus
+            cursor.execute("""
+                UPDATE clickbotusers
+                SET payout_balance = payout_balance + %s
+                WHERE user_id = %s
+            """, (bonus, referrer_id))
+            conn.commit()
+
+
             
 def with_retry(max_attempts=3, delay=0.5):
     """Decorator for retrying database operations."""
@@ -150,6 +187,7 @@ def with_retry(max_attempts=3, delay=0.5):
 if __name__ == "__main__":
     init_databases()
     print("Databases initialized in Supabase PostgreSQL database.")
+
 
 
 
