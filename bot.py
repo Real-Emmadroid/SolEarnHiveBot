@@ -329,7 +329,7 @@ async def unified_message_handler(update: Update, context: ContextTypes.DEFAULT_
     elif text == "🔁 Convert":
         await handle_convert(update, context)
 
-    elif text == "⚙ Settingst":
+    elif text == "⚙ Settings":
         await settings_command(update, context)
 
     elif text == "🔙 Back":
@@ -551,7 +551,7 @@ async def cancel_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def referrals_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
+    user = update.effective_user.id
     user_id = user.id 
     bot_username = (await context.bot.get_me()).username
 
@@ -931,6 +931,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
