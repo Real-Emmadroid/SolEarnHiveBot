@@ -198,13 +198,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Check if user exists
             cursor.execute("SELECT 1 FROM clickbotusers WHERE id = %s", (user_id,))
             if not cursor.fetchone():
-
-            # Insert new user
-            cursor.execute("""
-                INSERT INTO clickbotusers (id, general_balance, payout_balance, referral_id)
-                VALUES (%s, 0, 0, %s)
-            """, (user_id, referral_id))
-            conn.commit()
+                # Insert only if not exists
+                cursor.execute("""
+                    INSERT INTO clickbotusers (id, general_balance, payout_balance, referral_id)
+                    VALUES (%s, 0, 0, %s)
+                """, (user_id, referral_id))
+                conn.commit()
     
     
     await update.message.reply_text(
@@ -917,6 +916,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
