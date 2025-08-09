@@ -385,17 +385,16 @@ async def cancel_deposit(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
-ASK_WALLET = 1
-ASK_WITHDRAW_AMOUNT = 2
+ASK_WALLET, ASK_WITHDRAW_AMOUNT = range(2)
 
-# ---------- START WITHDRAW ----------
-async def handle_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# Step 1: Entry point when user clicks ➖ Withdraw
+async def start_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user = get_user(user_id)
     wallet_address = user.get("wallet_address")
 
     if not wallet_address:
-        # Wallet not set → ask to set
+        # Ask user to set wallet first
         keyboard = [[InlineKeyboardButton("➕ Set / Change Wallet", callback_data="set_wallet")]]
         await update.message.reply_text(
             "⚠️ You have not set a withdrawal wallet address.",
@@ -403,7 +402,6 @@ async def handle_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return ConversationHandler.END
 
-    # Wallet exists → check balance
     payout_balance = float(user["payout_balance"])
     if payout_balance < MIN_WITHDRAW:
         await update.message.reply_text(
@@ -415,13 +413,12 @@ async def handle_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f"💳 Your withdrawal wallet is:\n`{wallet_address}`\n\n"
         "Enter the amount of SOL you wish to withdraw:",
-        parse_mode="Markdown",
-        reply_markup=ReplyKeyboardRemove()
+        parse_mode="Markdown"
     )
     return ASK_WITHDRAW_AMOUNT
 
 
-# ---------- INLINE BUTTON HANDLER ----------
+# Step 2: Inline button handler to set wallet
 async def withdraw_button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -434,12 +431,11 @@ async def withdraw_button_handler(update: Update, context: ContextTypes.DEFAULT_
         return ASK_WALLET
 
 
-# ---------- PROCESS WALLET ADDRESS ----------
+# Step 3: Save wallet address
 async def process_wallet_address(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     wallet_address = update.message.text.strip()
 
-    # Basic validation
     if len(wallet_address) < 20:
         await update.message.reply_text("❌ Invalid address. Please send a valid Solana address.")
         return ASK_WALLET
@@ -458,7 +454,7 @@ async def process_wallet_address(update: Update, context: ContextTypes.DEFAULT_T
     return ConversationHandler.END
 
 
-# ---------- PROCESS WITHDRAWAL AMOUNT ----------
+# Step 4: Process withdrawal
 async def process_withdraw_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text.strip()
@@ -501,10 +497,9 @@ async def process_withdraw_amount(update: Update, context: ContextTypes.DEFAULT_
         parse_mode="Markdown"
     )
 
-    # Optional: notify admin
-    admin_chat_id = CREATOR_ID
+    # Notify admin
     await context.bot.send_message(
-        chat_id=admin_chat_id,
+        chat_id=CREATOR_ID,
         text=f"🔔 New withdrawal request\nUser ID: {user_id}\nAmount: {amount} SOL\nAddress: {wallet_address}"
     )
 
@@ -777,18 +772,14 @@ def main():
     application = ApplicationBuilder().token(TOKEN).build()
     application.add_error_handler(error_handler)
 
-    withdraw_handler = ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex("^➖ Withdraw$"), handle_withdraw)],
+    withdraw_conv_handler = ConversationHandler(
+        entry_points=[MessageHandler(filters.Regex("^➖ Withdraw$"), start_withdraw)],
         states={
             ASK_WALLET: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_wallet_address)],
             ASK_WITHDRAW_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_withdraw_amount)]
         },
         fallbacks=[],
-        map_to_parent={}
     )
-
-    dispatcher.add_handler(CallbackQueryHandler(withdraw_button_handler, pattern="set_wallet"))
-    dispatcher.add_handler(withdraw_handler)
 
 
     deposit_conv_handler = ConversationHandler(
@@ -799,6 +790,8 @@ def main():
         fallbacks=[CommandHandler("cancel", cancel_deposit)],
     )
     application.add_handler(deposit_conv_handler)
+    application.add_handler(CallbackQueryHandler(withdraw_button_handler, pattern="set_wallet"))
+    application.add_handler(withdraw_conv_handler)
    
    
     # Add command handlers
@@ -826,6 +819,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
