@@ -5,6 +5,7 @@ import logging
 import sqlite3  
 import json
 import random
+import urllib.parse
 import asyncio
 import string
 import requests
@@ -38,6 +39,7 @@ CREATOR_ID = 7112609512  # Replace with your actual Telegram user ID
 BOT_USERNAME = "solearnhivebot"
 MAIN_CHANNEL_LINK = "https://t.me/SolEarnHiveUpdates"
 MIN_WITHDRAW = 0.1  # Minimum allowed
+MAX_ADS_PER_USER = 50
 UTC = pytz.utc
 NOWPAYMENTS_API_KEY = "5RRXFWG-7ZY41Q9-P19J9DZ-Q3QSZJM"
 app = Flask(__name__)
@@ -332,6 +334,12 @@ async def unified_message_handler(update: Update, context: ContextTypes.DEFAULT_
     elif text == "⚙ Settings":
         await settings_command(update, context)
 
+    elif text == "📊 My Ads":
+        await my_ads(update, context)
+
+    elif text == "➕ New Ad ➕":
+        await newad_start(update, context)
+
     elif text == "🔙 Back":
         await start(update, context)
     else:
@@ -621,6 +629,37 @@ async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=reply_markup
     )
         
+async def my_ads(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+
+    with get_db_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT COUNT(*) FROM ads WHERE user_id = %s", (user_id,))
+            count = cursor.fetchone()[0]
+
+    text = f"Here you can manage all your running/expired promotions. ({count} / {MAX_ADS_PER_USER})"
+
+    keyboard = [
+        ["➕ New Ad ➕"],
+        ["🔙 Back"]
+    ]
+
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
+
+    await update.message.reply_text(text, reply_markup=reply_markup)
+
+promo_type_keyboard = [
+    ["Channel or Group", "Bot"],
+    ["Post Views", "Link URL"],
+    ["🔙 Back"]
+]
+
+promo_type_markup = ReplyKeyboardMarkup(promo_type_keyboard, resize_keyboard=True, one_time_keyboard=True)
+
+async def newad_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = "What would you like to promote?\n\nChoose an option below...."
+    await update.message.reply_text(text, reply_markup=promo_type_markup)
+
 
 async def ultstat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != CREATOR_ID:
@@ -926,6 +965,7 @@ def main():
         ("broadcast", broadcast),
         ("balance", balance_command),
         ("withdraw", start_withdraw),
+        ("newad", newad_start),
         ("promo", broadcast_command),
     ]
     for command, handler in handlers:
@@ -944,6 +984,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
