@@ -28,7 +28,7 @@ from telegram.ext import ApplicationBuilder, Application, CommandHandler, Conver
 from telegram.constants import ChatAction, ChatMemberStatus, ParseMode, MessageEntityType
 from database import init_databases
 from database import (
-    get_db_connection, get_user, update_balances, set_deposit_address, get_deposit_address, convert_earnings_to_general
+    get_db_connection, get_user, update_balances, set_deposit_address, get_deposit_address, convert_earnings_to_general, add_referral_deposit_bonus, add_referral_task_bonus
 )
 
 # Configuration
@@ -100,6 +100,20 @@ def ipn_listener():
                     SET general_balance = general_balance + %s
                     WHERE id = %s
                 """, (amount, user_id))
+
+                # 2️⃣ Check if they have a referrer
+                cursor.execute("SELECT referral_id FROM clickbotusers WHERE id = %s", (user_id,))
+                ref_row = cursor.fetchone()
+                if ref_row and ref_row[0]:
+                    referrer_id = ref_row[0]
+                    bonus = amount * 0.02  # 2% of deposit
+                    cursor.execute("""
+                        UPDATE clickbotusers
+                        SET payout_balance = payout_balance + %s
+                        WHERE id = %s
+                    """, (bonus, referrer_id))
+                    print(f"🎁 Referral bonus: {bonus:.6f} SOL credited to referrer {referrer_id}")
+
                 conn.commit()
 
         print(f"✅ Credited {amount:.6f} SOL to user {user_id}")
@@ -170,6 +184,27 @@ REPLY_KEYBOARD = [
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     chat_id = update.effective_chat.id
+    args = context.args  # e.g., after /start 12345
+    referral_id = None
+
+    if args and args[0].isdigit():
+        referral_id = int(args[0])
+        if referral_id == user_id:
+            referral_id = None  # Prevent self-referral
+
+    with get_db_connection() as conn:
+        with conn.cursor() as cursor:
+            # Check if user exists
+            cursor.execute("SELECT 1 FROM clickbotusers WHERE id = %s", (user_id,))
+            if cursor.fetchone():
+                return  # User already exists, skip
+
+            # Insert new user
+            cursor.execute("""
+                INSERT INTO clickbotusers (id, general_balance, payout_balance, referral_id)
+                VALUES (%s, 0, 0, %s)
+            """, (user_id, referral_id))
+            conn.commit()
     
     
     await update.message.reply_text(
@@ -297,6 +332,9 @@ async def unified_message_handler(update: Update, context: ContextTypes.DEFAULT_
     elif text == "➖ Withdraw":
         await start_withdraw (update, context)
 
+    elif text == "🙌 Referrals":
+        await referrals_command (update, context)
+
     elif text == "📜 History":
         await update.message.reply_text("🛠 Transaction history will show here.")
 
@@ -306,7 +344,7 @@ async def unified_message_handler(update: Update, context: ContextTypes.DEFAULT_
     elif text == "🔙 Back":
         await start(update, context)
     else:
-        await start(update, context)
+        await start(update, context) 
 
 
 async def handle_convert(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -400,7 +438,7 @@ async def start_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "⚠️ You have not set a withdrawal wallet address.",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
-        return ConversationHandler.END
+        return ASK_WALLET  # Keep conversation alive for wallet setup
 
     payout_balance = float(user["payout_balance"])
     if payout_balance < MIN_WITHDRAW:
@@ -448,10 +486,10 @@ async def process_wallet_address(update: Update, context: ContextTypes.DEFAULT_T
             conn.commit()
 
     await update.message.reply_text(
-        f"✅ Wallet address saved:\n`{wallet_address}`",
+        f"✅ Wallet address saved:\n`{wallet_address}`\n\nNow send me the amount of SOL you want to withdraw:",
         parse_mode="Markdown"
     )
-    return ConversationHandler.END
+    return ASK_WITHDRAW_AMOUNT
 
 
 # Step 4: Process withdrawal
@@ -504,6 +542,33 @@ async def process_withdraw_amount(update: Update, context: ContextTypes.DEFAULT_
     )
 
     return ConversationHandler.END
+
+
+async def referrals_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    bot_username = (await context.bot.get_me()).username
+
+    with get_db_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT payout_balance FROM clickbotusers WHERE user_id = %s", (user_id,))
+            payout_balance = cursor.fetchone()[0] or 0
+
+            cursor.execute("SELECT COUNT(*) FROM clickbotusers WHERE referral_id = %s", (user_id,))
+            total_refs = cursor.fetchone()[0]
+
+    referral_link = f"https://t.me/{bot_username}?start={user_id}"
+
+    text = (
+        f"🔍 You have *{total_refs}* referrals, and earned *{payout_balance:.6f} SOL*.\n\n"
+        f"To refer people to the bot, send them this link:\n"
+        f"{referral_link}\n\n"
+        "💰 You will earn 15% of your friends' earnings from tasks, "
+        "and 2% if your friend deposits.\n\n"
+        "_You can withdraw affiliate income or spend it on ADS!_"
+    )
+
+    await update.message.reply_text(text, parse_mode="Markdown")
+
         
 
 async def ultstat(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -775,8 +840,13 @@ def main():
     withdraw_conv_handler = ConversationHandler(
         entry_points=[MessageHandler(filters.Regex("^➖ Withdraw$"), start_withdraw)],
         states={
-            ASK_WALLET: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_wallet_address)],
-            ASK_WITHDRAW_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_withdraw_amount)]
+            ASK_WALLET: [
+                CallbackQueryHandler(withdraw_button_handler, pattern="^set_wallet$"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, process_wallet_address)
+            ],
+            ASK_WITHDRAW_AMOUNT: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, process_withdraw_amount)
+            ]
         },
         fallbacks=[],
     )
@@ -790,7 +860,6 @@ def main():
         fallbacks=[CommandHandler("cancel", cancel_deposit)],
     )
     application.add_handler(deposit_conv_handler)
-    application.add_handler(CallbackQueryHandler(withdraw_button_handler, pattern="set_wallet"))
     application.add_handler(withdraw_conv_handler)
    
    
@@ -819,6 +888,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
