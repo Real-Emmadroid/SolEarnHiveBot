@@ -340,6 +340,9 @@ async def unified_message_handler(update: Update, context: ContextTypes.DEFAULT_
     elif text == "➕ New Ad ➕":
         await newad_start(update, context)
 
+    elif text == "📣 Channel or Group":
+        await channel_ad_start(update, context)
+
     elif text == "🔙 Back":
         await start(update, context)
     else:
@@ -649,16 +652,247 @@ async def my_ads(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, reply_markup=reply_markup)
 
 promo_type_keyboard = [
-    ["Channel or Group", "Bot"],
-    ["Post Views", "Link URL"],
+    ["📣 Channel or Group", "🤖 Bot"],
+    ["📃 Post Views", "🔗 Link URL"],
     ["🔙 Back"]
 ]
 
 promo_type_markup = ReplyKeyboardMarkup(promo_type_keyboard, resize_keyboard=True, one_time_keyboard=True)
 
 async def newad_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = "What would you like to promote?\n\nChoose an option below...."
+    text = "What would you like to promote?\n\nChoose an option below....👇🏻"
     await update.message.reply_text(text, reply_markup=promo_type_markup)
+
+
+# States
+(
+    CHANNEL_USERNAME,
+    CHANNEL_TITLE,
+    CHANNEL_DESCRIPTION,
+    CHANNEL_CPC,
+    CHANNEL_BUDGET,
+) = range(5)
+
+
+async def channel_ad_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [["🔙 Back"]]
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
+
+    text = (
+        "➡️ Enter the Username or URL of the public channel or group you want to promote:\n"
+        'Please add this bot to the channel administrators first.\n'
+        'The bot needs "Invite New Members" rights.\n\n'
+        "The bot will start sending members to your channel."
+    )
+    await update.message.reply_text(text, reply_markup=reply_markup)
+    return CHANNEL_USERNAME
+
+
+async def channel_username_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+
+    if text.lower() == "🔙 back":
+        await update.message.reply_text("Cancelled channel ad creation.", reply_markup=ReplyKeyboardRemove())
+        return ConversationHandler.END
+
+    username = text
+    if username.startswith("https://t.me/"):
+        username = username.split("https://t.me/")[-1]
+
+    if not username.startswith("@"):
+        username = "@" + username
+
+    bot = context.bot
+
+    try:
+        chat_member = await bot.get_chat_member(username, bot.id)
+        if chat_member.status not in ["administrator", "creator"]:
+            await update.message.reply_text(
+                "❌ Make the bot ADMIN of your channel, with the rights to add people!\n"
+                "Please try again.",
+                reply_markup=ReplyKeyboardMarkup([["🔙 Back"]], resize_keyboard=True, one_time_keyboard=True),
+            )
+            return CHANNEL_USERNAME
+    except Exception as e:
+        await update.message.reply_text(
+            f"❌ Could not access the channel/group: {e}\n"
+            "Make sure the channel/group username is correct and the bot is added as admin.",
+            reply_markup=ReplyKeyboardMarkup([["🔙 Back"]], resize_keyboard=True, one_time_keyboard=True),
+        )
+        return CHANNEL_USERNAME
+
+    context.user_data["channel_username"] = username
+    await update.message.reply_text(
+        "Enter a title for your ad:", reply_markup=ReplyKeyboardMarkup([["🔙 Back"]], resize_keyboard=True, one_time_keyboard=True)
+    )
+    return CHANNEL_TITLE
+
+
+async def channel_title_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    title = update.message.text.strip()
+    if title.lower() == "🔙 back":
+        await update.message.reply_text("Cancelled channel ad creation.", reply_markup=ReplyKeyboardRemove())
+        return ConversationHandler.END
+
+    if len(title) < 3:
+        await update.message.reply_text("Title too short, please enter at least 3 characters.")
+        return CHANNEL_TITLE
+
+    context.user_data["channel_title"] = title
+    await update.message.reply_text(
+        "Enter a description for your ad:", reply_markup=ReplyKeyboardMarkup([["🔙 Back"]], resize_keyboard=True, one_time_keyboard=True)
+    )
+    return CHANNEL_DESCRIPTION
+
+
+async def channel_description_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    desc = update.message.text.strip()
+    if desc.lower() == "🔙 back":
+        await update.message.reply_text("Cancelled channel ad creation.", reply_markup=ReplyKeyboardRemove())
+        return ConversationHandler.END
+
+    if len(desc) < 5:
+        await update.message.reply_text("Description too short, please enter at least 5 characters.")
+        return CHANNEL_DESCRIPTION
+
+    context.user_data["channel_description"] = desc
+    await update.message.reply_text(
+        "What is the most you want to pay per click?\n\n"
+        "Minimum Cost Per Click (CPC): 0.0001 SOL\n\n"
+        "➡️ Enter a value in SOL:",
+        reply_markup=ReplyKeyboardMarkup([["🔙 Back"]], resize_keyboard=True, one_time_keyboard=True),
+    )
+    return CHANNEL_CPC
+
+
+async def channel_cpc_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    cpc_text = update.message.text.strip()
+    if cpc_text.lower() == "🔙 back":
+        await update.message.reply_text("Cancelled channel ad creation.", reply_markup=ReplyKeyboardRemove())
+        return ConversationHandler.END
+
+    try:
+        cpc = float(cpc_text)
+    except ValueError:
+        await update.message.reply_text("Invalid value. Please enter a numeric value for CPC in SOL.")
+        return CHANNEL_CPC
+
+    if cpc < 0.0001:
+        await update.message.reply_text("Minimum CPC is 0.0001 SOL. Please enter a valid value.")
+        return CHANNEL_CPC
+
+    context.user_data["channel_cpc"] = cpc
+
+    # Fetch user's general balance from DB
+    user_id = update.effective_user.id
+    with get_db_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT general_balance FROM clickbotusers WHERE id = %s", (user_id,))
+            result = cursor.fetchone()
+            balance = float(result[0]) if result else 0.0
+
+    context.user_data["user_balance"] = balance
+
+    await update.message.reply_text(
+        f"How much do you want to spend on this campaign?\n\n"
+        f"Available balance: {balance:.8f} SOL\n\n"
+        "➡️ Enter a value in SOL:",
+        reply_markup=ReplyKeyboardMarkup([["➕ Deposit", "🔙 Back"]], resize_keyboard=True, one_time_keyboard=True),
+    )
+    return CHANNEL_BUDGET
+
+
+async def channel_budget_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    budget_text = update.message.text.strip()
+    user_balance = context.user_data.get("user_balance", 0.0)
+
+    if budget_text.lower() == "🔙 back":
+        await update.message.reply_text("Cancelled channel ad creation.", reply_markup=ReplyKeyboardRemove())
+        return ConversationHandler.END
+
+    if budget_text == "➕ deposit":
+        await update.message.reply_text("Please deposit funds via /deposit command or through the bot website.")
+        return CHANNEL_BUDGET
+
+    try:
+        budget = float(budget_text)
+    except ValueError:
+        await update.message.reply_text("Invalid value. Please enter a numeric value for the campaign budget in SOL.")
+        return CHANNEL_BUDGET
+
+    if budget > user_balance:
+        await update.message.reply_text(
+            f"❌ You do not own enough SOL for this!\nYou own: {user_balance:.8f} SOL",
+            reply_markup=ReplyKeyboardMarkup([["➕ Deposit", "🔙 Back"]], resize_keyboard=True, one_time_keyboard=True),
+        )
+        return CHANNEL_BUDGET
+
+    context.user_data["channel_budget"] = budget
+
+    # Save ad to DB
+    user_id = update.effective_user.id
+    ad_data = {"channel_link": context.user_data["channel_username"]}
+
+    with get_db_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO ads (user_id, ad_type, details, status, created_at, expires_at)
+                VALUES (%s, %s, %s, %s, now(), now() + interval '30 days')
+                RETURNING id
+                """,
+                (user_id, "channel_or_group", json.dumps(ad_data), "running"),
+            )
+            ad_id = cursor.fetchone()[0]
+
+            cursor.execute(
+                """
+                INSERT INTO channel_ads_details (ad_id, title, description, cpc, budget, clicks, skipped)
+                VALUES (%s, %s, %s, %s, %s, 0, 0)
+                """,
+                (
+                    ad_id,
+                    context.user_data["channel_title"],
+                    context.user_data["channel_description"],
+                    context.user_data["channel_cpc"],
+                    budget,
+                ),
+            )
+
+            # Deduct budget from user balance
+            cursor.execute(
+                """
+                UPDATE clickbotusers
+                SET general_balance = general_balance - %s
+                WHERE id = %s
+                """,
+                (budget, user_id),
+            )
+
+            conn.commit()
+
+    message = (
+        f"⚙️ Campaign #{ad_id} - 📣 Channel / Group promotion\n\n"
+        f"✏️ Title: {context.user_data['channel_title']}\n"
+        f"🗨 Description: {context.user_data['channel_description']}\n\n"
+        f"🎉 Channel: {context.user_data['channel_username']}\n"
+        f"🔗 URL: https://t.me/{context.user_data['channel_username'].lstrip('@')}\n\n"
+        f"Status: ▶️ Ongoing\n"
+        f"CPC: {context.user_data['channel_cpc']:.8f} SOL\n"
+        f"Budget: {context.user_data['channel_budget']:.8f} SOL\n"
+        f"Total Clicks: 0 clicks\n"
+        f"Skipped: 0 times\n\n"
+        "___________________________"
+    )
+
+    await update.message.reply_text(message, reply_markup=ReplyKeyboardRemove())
+
+    return ConversationHandler.END
+
+
+async def cancel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Operation cancelled.", reply_markup=ReplyKeyboardRemove())
+    return ConversationHandler.END
 
 
 async def ultstat(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -943,6 +1177,19 @@ def main():
         fallbacks=[MessageHandler(filters.Regex("^🔙 Cancel$"), cancel_withdraw)],
     )
 
+    # Register this conversation handler in your bot setup
+    channel_ad_conv_handler = ConversationHandler(
+        entry_points=[CommandHandler("channel_ad_start", channel_ad_start)],
+        states={
+            CHANNEL_USERNAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, channel_username_handler)],
+            CHANNEL_TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, channel_title_handler)],
+            CHANNEL_DESCRIPTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, channel_description_handler)],
+            CHANNEL_CPC: [MessageHandler(filters.TEXT & ~filters.COMMAND, channel_cpc_handler)],
+            CHANNEL_BUDGET: [MessageHandler(filters.TEXT & ~filters.COMMAND, channel_budget_handler)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel_handler)],
+    )
+
 
     deposit_conv_handler = ConversationHandler(
         entry_points=[MessageHandler(filters.Regex("^➕ Deposit$"), start_deposit)],
@@ -956,6 +1203,7 @@ def main():
     )
     application.add_handler(deposit_conv_handler)
     application.add_handler(withdraw_conv_handler)
+    application.add_handler(channel_ad_conv_handler)
    
    
     # Add command handlers
@@ -984,6 +1232,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
