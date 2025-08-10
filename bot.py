@@ -1634,6 +1634,9 @@ async def watch_ads(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ad_id = ad["id"]
     html_text, post_link = build_ad_text_and_link(ad)
 
+    # Set start time for this ad (used by watch_watched for timer check)
+    context.user_data[f"watch_start_{ad_id}"] = time.time()
+
     await update.message.reply_text(html_text, reply_markup=build_watch_keyboard(ad_id), parse_mode="HTML")
     if isinstance(post_link, str) and post_link.startswith("http"):
         await update.message.reply_text(post_link)
@@ -1668,13 +1671,12 @@ async def watch_skip(update: Update, context: ContextTypes.DEFAULT_TYPE, ad_id=N
         await context.bot.send_message(chat_id=query.message.chat_id, text=post_link)
 
 
-# Watched Ad — called as: await watch_watched(update, context, ad_id)
 async def watch_watched(update: Update, context: ContextTypes.DEFAULT_TYPE, ad_id=None):
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
 
-    # extract ad_id if not provided
+    # Extract ad_id if not provided
     if ad_id is None:
         try:
             ad_id = int(query.data.split(":", 1)[1])
@@ -1682,27 +1684,46 @@ async def watch_watched(update: Update, context: ContextTypes.DEFAULT_TYPE, ad_i
             await query.edit_message_text("❌ Invalid ad id.")
             return
 
-    # Record click and increment counters
+    # Check watch timer
+    start_time = context.user_data.get(f"watch_start_{ad_id}")
+    if not start_time:
+        await query.answer("⏳ Please start the ad before clicking 'Watched'.", show_alert=True)
+        return
+    
+    elapsed = time.time() - start_time
+    wait_time = 10 - elapsed
+    if wait_time > 0:
+        await query.answer(f"⏳ Please wait {int(wait_time)} more seconds before clicking.", show_alert=True)
+        return
+
+    # Proceed with click recording
+    reward_amount = 0
     with get_db_connection() as conn:
         with conn.cursor() as cursor:
-            # If the user already clicked Watched for this ad, skip
+            # Prevent duplicate completions
             cursor.execute(
                 "SELECT 1 FROM post_view_ads_clicks WHERE ad_id=%s AND user_id=%s",
                 (ad_id, user_id)
             )
             if cursor.fetchone():
-                await query.edit_message_text("You have already completed this ad.")
+                await query.edit_message_text("✅ You have already completed this ad.")
                 return
 
-            # Insert click record (unique constraint prevents dupes)
-            try:
-                cursor.execute(
-                    "INSERT INTO post_view_ads_clicks (ad_id, user_id) VALUES (%s, %s)",
-                    (ad_id, user_id)
-                )
-            except Exception:
-                # if unique constraint triggers, ignore
-                pass
+            # Get CPC for reward calculation
+            cursor.execute(
+                "SELECT cpc FROM post_view_ads_details WHERE ad_id=%s",
+                (ad_id,)
+            )
+            row = cursor.fetchone()
+            if row:
+                cpc_val = float(row[0])
+                reward_amount = round(cpc_val * 0.8, 6)  # 80% reward
+
+            # Insert click record
+            cursor.execute(
+                "INSERT INTO post_view_ads_clicks (ad_id, user_id) VALUES (%s, %s)",
+                (ad_id, user_id)
+            )
 
             # Increment clicks counter
             cursor.execute(
@@ -1710,7 +1731,14 @@ async def watch_watched(update: Update, context: ContextTypes.DEFAULT_TYPE, ad_i
                 (ad_id,)
             )
 
-            # Get current clicks/budget/cpc to check if need to pause
+            # Add reward to payout balance
+            if reward_amount > 0:
+                cursor.execute(
+                    "UPDATE users SET payout_balance = payout_balance + %s WHERE user_id = %s",
+                    (reward_amount, user_id)
+                )
+
+            # Pause ad if budget exhausted
             cursor.execute(
                 "SELECT clicks, budget, cpc FROM post_view_ads_details WHERE ad_id = %s",
                 (ad_id,)
@@ -1718,18 +1746,23 @@ async def watch_watched(update: Update, context: ContextTypes.DEFAULT_TYPE, ad_i
             row = cursor.fetchone()
             if row:
                 clicks_val, budget_val, cpc_val = row
-                # protect against division by zero or nulls
                 try:
                     limit = math.floor(float(budget_val) / float(cpc_val)) if cpc_val and float(cpc_val) > 0 else None
                 except Exception:
                     limit = None
-
                 if limit is not None and clicks_val >= limit:
                     cursor.execute("UPDATE ads SET status = 'paused' WHERE id = %s", (ad_id,))
 
         conn.commit()
 
-    # Show next ad (exclude the one just watched)
+    # Congratulate user
+    if reward_amount > 0:
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text=f"🎉 Congratulations! You have earned {reward_amount:.6f} SOL."
+        )
+
+    # Show next ad
     next_ad = get_next_ad(user_id, exclude_ad_id=ad_id)
     if not next_ad:
         await query.edit_message_text(
@@ -1740,7 +1773,15 @@ async def watch_watched(update: Update, context: ContextTypes.DEFAULT_TYPE, ad_i
     next_ad_id = next_ad["id"]
     html_text, post_link = build_ad_text_and_link(next_ad)
 
-    await query.edit_message_text(html_text, reply_markup=build_watch_keyboard(next_ad_id), parse_mode="HTML")
+    # Store start time for the new ad
+    context.user_data[f"watch_start_{next_ad_id}"] = time.time()
+
+    await query.edit_message_text(
+        html_text,
+        reply_markup=build_watch_keyboard(next_ad_id),
+        parse_mode="HTML"
+    )
+
     if isinstance(post_link, str) and post_link.startswith("http"):
         await context.bot.send_message(chat_id=query.message.chat_id, text=post_link)
 
@@ -2432,6 +2473,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
