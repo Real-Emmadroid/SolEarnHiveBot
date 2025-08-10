@@ -736,7 +736,7 @@ async def my_ads(update: Update, context: ContextTypes.DEFAULT_TYPE):
         with conn.cursor(row_factory=dict_row) as cursor:
             cursor.execute("""
                 SELECT 
-                    a.id, a.user_id, a.ad_type, a.target_id, a.details, a.status,
+                    a.id, a.user_id, a.ad_type, a.details, a.status,
                     d.cpc, d.budget, d.clicks, d.skipped
                 FROM ads a
                 JOIN post_view_ads_details d ON a.id = d.ad_id
@@ -1559,9 +1559,16 @@ async def post_views_cancel_handler(update: Update, context: ContextTypes.DEFAUL
 # Fetch next available ad (sync, psycopg2 style)
 def get_next_ad(user_id):
     with get_db_connection() as conn:
-        with conn.cursor() as cursor:
+        with conn.cursor(row_factory=dict_row) as cursor:
             cursor.execute("""
-                SELECT a.id, a.title, a.status, pvd.clicks, pvd.budget, pvd.cpc, pvd.post_link
+                SELECT 
+                    a.id,
+                    a.ad_type,
+                    a.details,
+                    a.status,
+                    pvd.clicks,
+                    pvd.budget,
+                    pvd.cpc
                 FROM ads a
                 JOIN post_view_ads_details pvd ON pvd.ad_id = a.id
                 WHERE a.status = 'active'
@@ -1585,7 +1592,26 @@ async def watch_ads(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    ad_id, title, status, clicks, budget, cpc, post_link = ad
+    ad_id = ad['id']
+    ad_type = ad['ad_type']
+    details = ad['details'] or {}
+    status = ad['status']
+    clicks = ad['clicks']
+    budget = ad['budget']
+    cpc = ad['cpc']
+
+    # Get optional fields safely
+    title = details.get('title')
+    description = details.get('description')
+    post_link = details.get('post_link', '')
+
+    # Build mission text dynamically
+    ad_text_parts = ["Mission: Read this post / increase views count"]
+    if title:
+        ad_text_parts.append(f"\n\n📌 {title}")
+    if description:
+        ad_text_parts.append(f"\n{description}")
+    ad_text_parts.append("\n\nPress WATCHED to complete this task")
 
     keyboard = [
         [
@@ -1596,7 +1622,7 @@ async def watch_ads(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     await update.message.reply_text(
-        "Mission: Read this post / increase views count\n\nPress WATCHED to complete this task",
+        "".join(ad_text_parts),
         reply_markup=reply_markup
     )
 
@@ -1611,12 +1637,32 @@ async def watch_skip(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     ad = get_next_ad(user_id)
     if not ad:
-        await query.edit_message_text(
+        await update.message.reply_text(
             "‼️ Aw snap! There are no more ads available.\n\nPress MY ADS to create a new task"
         )
         return
 
-    ad_id, title, status, clicks, budget, cpc, post_link = ad
+    ad_id = ad['id']
+    ad_type = ad['ad_type']
+    details = ad['details'] or {}
+    status = ad['status']
+    clicks = ad['clicks']
+    budget = ad['budget']
+    cpc = ad['cpc']
+
+    # Get optional fields safely
+    title = details.get('title')
+    description = details.get('description')
+    post_link = details.get('post_link', '')
+
+    # Build mission text dynamically
+    ad_text_parts = ["Mission: Read this post / increase views count"]
+    if title:
+        ad_text_parts.append(f"\n\n📌 {title}")
+    if description:
+        ad_text_parts.append(f"\n{description}")
+    ad_text_parts.append("\n\nPress WATCHED to complete this task")
+
     keyboard = [
         [
             InlineKeyboardButton("⏭ Skip", callback_data=f"watch_skip:{ad_id}"),
@@ -1625,14 +1671,14 @@ async def watch_skip(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    await query.edit_message_text(
-        "Mission: Read this post / increase views count\n\nPress WATCHED to complete this task",
+    await update.message.reply_text(
+        "".join(ad_text_parts),
         reply_markup=reply_markup
     )
 
     if post_link.startswith("http"):
-        await context.bot.send_message(chat_id=query.message.chat_id, text=post_link)
-
+        await update.message.reply_text(post_link)
+        
 # Mark Ad as Watched
 async def watch_watched(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -1680,12 +1726,32 @@ async def watch_watched(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Show next ad
     ad = get_next_ad(user_id)
     if not ad:
-        await query.edit_message_text(
+        await update.message.reply_text(
             "‼️ Aw snap! There are no more ads available.\n\nPress MY ADS to create a new task"
         )
         return
 
-    ad_id, title, status, clicks, budget, cpc, post_link = ad
+    ad_id = ad['id']
+    ad_type = ad['ad_type']
+    details = ad['details'] or {}
+    status = ad['status']
+    clicks = ad['clicks']
+    budget = ad['budget']
+    cpc = ad['cpc']
+
+    # Get optional fields safely
+    title = details.get('title')
+    description = details.get('description')
+    post_link = details.get('post_link', '')
+
+    # Build mission text dynamically
+    ad_text_parts = ["Mission: Read this post / increase views count"]
+    if title:
+        ad_text_parts.append(f"\n\n📌 {title}")
+    if description:
+        ad_text_parts.append(f"\n{description}")
+    ad_text_parts.append("\n\nPress WATCHED to complete this task")
+
     keyboard = [
         [
             InlineKeyboardButton("⏭ Skip", callback_data=f"watch_skip:{ad_id}"),
@@ -1694,14 +1760,14 @@ async def watch_watched(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    await query.edit_message_text(
-        "Mission: Read this post / increase views count\n\nPress WATCHED to complete this task",
+    await update.message.reply_text(
+        "".join(ad_text_parts),
         reply_markup=reply_markup
     )
 
     if post_link.startswith("http"):
-        await context.bot.send_message(chat_id=query.message.chat_id, text=post_link)
-
+        await update.message.reply_text(post_link)
+        
 # Define conversation states
 LINK_URL, LINK_TITLE, LINK_DESCRIPTION, LINK_CPC, LINK_BUDGET = range(5)
 
@@ -2388,6 +2454,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
