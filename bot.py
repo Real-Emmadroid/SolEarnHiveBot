@@ -17,7 +17,8 @@ import traceback
 import html
 import time, hmac, hashlib
 import pytz
-from psycopg2.extras import DictCursor
+from psycopg.rows import dict_row  # ✅ for psycopg3
+from psycopg import sql
 from pytz import timezone as pytz_timezone  # to handle 'Africa/Lagos'
 from flask import Flask
 from coinpayments import CoinPaymentsAPI
@@ -711,30 +712,32 @@ async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
         
 
+
 async def my_ads(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
     # Get ads count
     with get_db_connection() as conn:
-        with conn.cursor(cursor_factory=DictCursor) as cursor:
-            cursor.execute("SELECT COUNT(*) AS cnt FROM ads WHERE user_id = %s", (user_id,))
-            count = cursor.fetchone()['cnt']
+        with conn.cursor(row_factory=dict_row) as cursor:
+            cursor.execute(
+                "SELECT COUNT(*) AS cnt FROM ads WHERE user_id = %s", 
+                (user_id,)
+            )
+            count = cursor.fetchone()["cnt"]
 
-    # Send main "My Ads" menu first
+    # Send main "My Ads" menu
     text = f"Here you can manage all your running/expired promotions. ({count} / {MAX_ADS_PER_USER})"
-    keyboard = [
-        ["➕ New Ad ➕"],
-        ["🔙 Back"]
-    ]
+    keyboard = [["➕ New Ad ➕"], ["🔙 Back"]]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
     await update.message.reply_text(text, reply_markup=reply_markup)
 
-    # Now fetch and send each ad
+    # Fetch ads with details
     with get_db_connection() as conn:
-        with conn.cursor(cursor_factory=DictCursor) as cursor:
+        with conn.cursor(row_factory=dict_row) as cursor:
             cursor.execute("""
-                SELECT a.id, a.user_id, a.ad_type, a.target_id, a.requirement, a.status,
-                       d.cpc, d.budget, d.clicks, d.skipped
+                SELECT 
+                    a.id, a.user_id, a.ad_type, a.target_id, a.details, a.status,
+                    d.cpc, d.budget, d.clicks, d.skipped
                 FROM ads a
                 JOIN post_view_ads_details d ON a.id = d.ad_id
                 WHERE a.user_id = %s
@@ -747,11 +750,24 @@ async def my_ads(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     for ad in ads:
+        details = ad["details"] or {}
+        title = details.get("title")
+        description = details.get("description")
+
+        # Build base ad text
         ad_text = (
             f"⚙️ Campaign #{ad['id']} - 📃 {ad['ad_type']}\n"
-            f"🔗 {ad['requirement']}\n\n"
-            f"💰 CPC: {ad['cpc']:.6f} SOL\n"
-            f"💵 Budget: {ad['budget']:.6f} SOL\n\n"
+        )
+
+        # If title or description exist, add them
+        if title:
+            ad_text += f"📌 {title}\n"
+        if description:
+            ad_text += f"📝 {description}\n"
+
+        ad_text += (
+            f"💰 CPC: {float(ad['cpc']):.6f} SOL\n"
+            f"💵 Budget: {float(ad['budget']):.6f} SOL\n\n"
             f"ℹ️ Status: {ad['status']}\n"
             f"👉 Total Clicks: {ad['clicks']} clicks\n"
             f"⏭ Skipped: {ad['skipped']} times\n"
@@ -2372,6 +2388,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
