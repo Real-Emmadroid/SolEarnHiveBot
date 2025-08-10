@@ -796,7 +796,7 @@ async def my_ads(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             ad_text,
             reply_markup=InlineKeyboardMarkup(buttons),
-            parse_mode="Markdown"
+            parse_mode="HTML"
         )
 
 
@@ -1556,11 +1556,12 @@ async def post_views_cancel_handler(update: Update, context: ContextTypes.DEFAUL
     await start(update, context)
     return ConversationHandler.END
 
-# Fetch next available ad (sync, psycopg2 style)
-def get_next_ad(user_id):
+
+# Helper: get next available ad; optionally exclude the current ad so Skip moves forward
+def get_next_ad(user_id, exclude_ad_id=None):
     with get_db_connection() as conn:
         with conn.cursor(row_factory=dict_row) as cursor:
-            cursor.execute("""
+            sql = """
                 SELECT 
                     a.id,
                     a.ad_type,
@@ -1576,12 +1577,50 @@ def get_next_ad(user_id):
                   AND a.id NOT IN (
                       SELECT ad_id FROM post_view_ads_clicks WHERE user_id = %s
                   )
-                ORDER BY a.id ASC
-                LIMIT 1
-            """, (user_id,))
-            return cursor.fetchone()
+            """
+            params = [user_id]
 
-# Watch Ads command
+            # exclude the ad we just showed (so Skip won't return the same ad)
+            if exclude_ad_id is not None:
+                sql += " AND a.id <> %s"
+                params.append(exclude_ad_id)
+
+            # show newest first (change to ASC if you want oldest first)
+            sql += " ORDER BY a.created_at ASC LIMIT 1"
+
+            cursor.execute(sql, tuple(params))
+            return cursor.fetchone()  # returns dict_row or None
+
+
+def build_ad_text_and_link(ad):
+    """Return (html_text, post_link) for an ad dict_row"""
+    details = ad.get("details") or {}
+    # old format uses "link", newer may use "post_link"
+    post_link = details.get("post_link") or details.get("link") or ""
+    title = details.get("title")
+    description = details.get("description")
+
+    parts = ["<b>Mission:</b> Read this post / increase views count"]
+    if title:
+        parts.append(f"\n\n📌 <b>{html.escape(str(title))}</b>")
+    if description:
+        parts.append(f"\n{html.escape(str(description))}")
+
+    parts.append("\n\nPress <b>WATCHED</b> to complete this task")
+
+    return "".join(parts), post_link
+
+
+def build_watch_keyboard(ad_id):
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("⏭ Skip", callback_data=f"watch_skip:{ad_id}"),
+            InlineKeyboardButton("✅ Watched", callback_data=f"watch_watched:{ad_id}")
+        ]
+    ])
+
+
+# Watch Ads command — show first available ad to the user
 async def watch_ads(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     ad = get_next_ad(user_id)
@@ -1592,113 +1631,61 @@ async def watch_ads(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    ad_id = ad['id']
-    ad_type = ad['ad_type']
-    details = ad['details'] or {}
-    status = ad['status']
-    clicks = ad['clicks']
-    budget = ad['budget']
-    cpc = ad['cpc']
+    ad_id = ad["id"]
+    html_text, post_link = build_ad_text_and_link(ad)
 
-    # Safely get optional fields (both new & old ad formats)
-    title = details.get('title')
-    description = details.get('description')
-
-    # Link handling: prefer 'post_link' for new ads, fall back to 'link' for old ads
-    post_link = details.get('post_link') or details.get('link', '')
-
-    # Build mission text dynamically (HTML-safe)
-    ad_text_parts = ["<b>Mission:</b> Read this post / increase views count"]
-    if title:
-        ad_text_parts.append(f"\n\n📌 <b>{html.escape(title)}</b>")
-    if description:
-        ad_text_parts.append(f"\n{html.escape(description)}")
-    ad_text_parts.append("\n\nPress <b>WATCHED</b> to complete this task")
-
-    keyboard = [
-        [
-            InlineKeyboardButton("⏭ Skip", callback_data=f"watch_skip:{ad_id}"),
-            InlineKeyboardButton("✅ Watched", callback_data=f"watch_watched:{ad_id}")
-        ]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    await update.message.reply_text(
-        "".join(ad_text_parts),
-        reply_markup=reply_markup,
-        parse_mode="HTML"
-    )
-
-    # Send link separately if valid
-    if post_link.startswith("http"):
+    await update.message.reply_text(html_text, reply_markup=build_watch_keyboard(ad_id), parse_mode="HTML")
+    if isinstance(post_link, str) and post_link.startswith("http"):
         await update.message.reply_text(post_link)
 
 
-# Skip Ad
-async def watch_skip(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# Skip Ad — called as: await watch_skip(update, context, ad_id)
+async def watch_skip(update: Update, context: ContextTypes.DEFAULT_TYPE, ad_id=None):
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
 
-    ad = get_next_ad(user_id)
-    if not ad:
-        await update.message.reply_text(
+    # if callback handler passed ad_id, use it; if not, try parse from callback data
+    if ad_id is None:
+        try:
+            ad_id = int(query.data.split(":", 1)[1])
+        except Exception:
+            ad_id = None
+
+    # Get next ad excluding the one user skipped
+    next_ad = get_next_ad(user_id, exclude_ad_id=ad_id)
+    if not next_ad:
+        await query.edit_message_text(
             "‼️ Aw snap! There are no more ads available.\n\nPress MY ADS to create a new task"
         )
         return
 
-    ad_id = ad['id']
-    ad_type = ad['ad_type']
-    details = ad['details'] or {}
-    status = ad['status']
-    clicks = ad['clicks']
-    budget = ad['budget']
-    cpc = ad['cpc']
+    next_ad_id = next_ad["id"]
+    html_text, post_link = build_ad_text_and_link(next_ad)
 
-    # Safely get optional fields (both new & old ad formats)
-    title = details.get('title')
-    description = details.get('description')
+    await query.edit_message_text(html_text, reply_markup=build_watch_keyboard(next_ad_id), parse_mode="HTML")
+    if isinstance(post_link, str) and post_link.startswith("http"):
+        await context.bot.send_message(chat_id=query.message.chat_id, text=post_link)
 
-    # Link handling: prefer 'post_link' for new ads, fall back to 'link' for old ads
-    post_link = details.get('post_link') or details.get('link', '')
 
-    # Build mission text dynamically (HTML-safe)
-    ad_text_parts = ["<b>Mission:</b> Read this post / increase views count"]
-    if title:
-        ad_text_parts.append(f"\n\n📌 <b>{html.escape(title)}</b>")
-    if description:
-        ad_text_parts.append(f"\n{html.escape(description)}")
-    ad_text_parts.append("\n\nPress <b>WATCHED</b> to complete this task")
-
-    keyboard = [
-        [
-            InlineKeyboardButton("⏭ Skip", callback_data=f"watch_skip:{ad_id}"),
-            InlineKeyboardButton("✅ Watched", callback_data=f"watch_watched:{ad_id}")
-        ]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    await update.message.reply_text(
-        "".join(ad_text_parts),
-        reply_markup=reply_markup,
-        parse_mode="HTML"
-    )
-
-    # Send link separately if valid
-    if post_link.startswith("http"):
-        await update.message.reply_text(post_link)
-
-        
-# Mark Ad as Watched
-async def watch_watched(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# Watched Ad — called as: await watch_watched(update, context, ad_id)
+async def watch_watched(update: Update, context: ContextTypes.DEFAULT_TYPE, ad_id=None):
     query = update.callback_query
     await query.answer()
-    ad_id = int(query.data.split(":")[1])
     user_id = query.from_user.id
 
+    # extract ad_id if not provided
+    if ad_id is None:
+        try:
+            ad_id = int(query.data.split(":", 1)[1])
+        except Exception:
+            await query.edit_message_text("❌ Invalid ad id.")
+            return
+
+    # Record click and increment counters
     with get_db_connection() as conn:
         with conn.cursor() as cursor:
-            # Check if already clicked
+            # If the user already clicked Watched for this ad, skip
             cursor.execute(
                 "SELECT 1 FROM post_view_ads_clicks WHERE ad_id=%s AND user_id=%s",
                 (ad_id, user_id)
@@ -1707,80 +1694,56 @@ async def watch_watched(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.edit_message_text("You have already completed this ad.")
                 return
 
-            # Add click
-            cursor.execute(
-                "INSERT INTO post_view_ads_clicks (ad_id, user_id) VALUES (%s, %s)",
-                (ad_id, user_id)
-            )
+            # Insert click record (unique constraint prevents dupes)
+            try:
+                cursor.execute(
+                    "INSERT INTO post_view_ads_clicks (ad_id, user_id) VALUES (%s, %s)",
+                    (ad_id, user_id)
+                )
+            except Exception:
+                # if unique constraint triggers, ignore
+                pass
 
-            # Increment clicks
+            # Increment clicks counter
             cursor.execute(
                 "UPDATE post_view_ads_details SET clicks = clicks + 1 WHERE ad_id = %s",
                 (ad_id,)
             )
 
-            # Check if budget reached
+            # Get current clicks/budget/cpc to check if need to pause
             cursor.execute(
                 "SELECT clicks, budget, cpc FROM post_view_ads_details WHERE ad_id = %s",
                 (ad_id,)
             )
-            clicks, budget, cpc = cursor.fetchone()
-            if clicks >= math.floor(budget / cpc):
-                cursor.execute(
-                    "UPDATE ads SET status = 'paused' WHERE id = %s",
-                    (ad_id,)
-                )
+            row = cursor.fetchone()
+            if row:
+                clicks_val, budget_val, cpc_val = row
+                # protect against division by zero or nulls
+                try:
+                    limit = math.floor(float(budget_val) / float(cpc_val)) if cpc_val and float(cpc_val) > 0 else None
+                except Exception:
+                    limit = None
+
+                if limit is not None and clicks_val >= limit:
+                    cursor.execute("UPDATE ads SET status = 'paused' WHERE id = %s", (ad_id,))
 
         conn.commit()
 
-    # Show next ad
-    ad = get_next_ad(user_id)
-    if not ad:
-        await update.message.reply_text(
+    # Show next ad (exclude the one just watched)
+    next_ad = get_next_ad(user_id, exclude_ad_id=ad_id)
+    if not next_ad:
+        await query.edit_message_text(
             "‼️ Aw snap! There are no more ads available.\n\nPress MY ADS to create a new task"
         )
         return
 
-    ad_id = ad['id']
-    ad_type = ad['ad_type']
-    details = ad['details'] or {}
-    status = ad['status']
-    clicks = ad['clicks']
-    budget = ad['budget']
-    cpc = ad['cpc']
+    next_ad_id = next_ad["id"]
+    html_text, post_link = build_ad_text_and_link(next_ad)
 
-    # Safely get optional fields (both new & old ad formats)
-    title = details.get('title')
-    description = details.get('description')
+    await query.edit_message_text(html_text, reply_markup=build_watch_keyboard(next_ad_id), parse_mode="HTML")
+    if isinstance(post_link, str) and post_link.startswith("http"):
+        await context.bot.send_message(chat_id=query.message.chat_id, text=post_link)
 
-    # Link handling: prefer 'post_link' for new ads, fall back to 'link' for old ads
-    post_link = details.get('post_link') or details.get('link', '')
-
-    # Build mission text dynamically (HTML-safe)
-    ad_text_parts = ["<b>Mission:</b> Read this post / increase views count"]
-    if title:
-        ad_text_parts.append(f"\n\n📌 <b>{html.escape(title)}</b>")
-    if description:
-        ad_text_parts.append(f"\n{html.escape(description)}")
-    ad_text_parts.append("\n\nPress <b>WATCHED</b> to complete this task")
-
-    keyboard = [
-        [
-            InlineKeyboardButton("⏭ Skip", callback_data=f"watch_skip:{ad_id}"),
-            InlineKeyboardButton("✅ Watched", callback_data=f"watch_watched:{ad_id}")
-        ]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    await update.message.reply_text(
-        "".join(ad_text_parts),
-        reply_markup=reply_markup,
-        parse_mode="HTML"
-    )
-
-    # Send link separately if valid
-    if post_link.startswith("http"):
-        await update.message.reply_text(post_link)
 
         
 # Define conversation states
