@@ -754,23 +754,23 @@ async def my_ads(update: Update, context: ContextTypes.DEFAULT_TYPE):
         title = details.get("title")
         description = details.get("description")
 
-        # Build base ad text
+        # Build base ad text in HTML
         ad_text = (
-            f"⚙️ Campaign #{ad['id']} - 📃 {ad['ad_type']}\n"
+            f"⚙️ <b>Campaign #{ad['id']}</b> - 📃 <b>{ad['ad_type']}</b>\n"
         )
 
         # If title or description exist, add them
         if title:
-            ad_text += f"📌 {title}\n"
+            ad_text += f"📌 <b>{title}</b>\n"
         if description:
             ad_text += f"📝 {description}\n"
 
         ad_text += (
-            f"💰 CPC: {float(ad['cpc']):.6f} SOL\n"
-            f"💵 Budget: {float(ad['budget']):.6f} SOL\n\n"
-            f"ℹ️ Status: {ad['status']}\n"
-            f"👉 Total Clicks: {ad['clicks']} clicks\n"
-            f"⏭ Skipped: {ad['skipped']} times\n"
+            f"💰 <b>CPC:</b> {float(ad['cpc']):.6f} SOL\n"
+            f"💵 <b>Budget:</b> {float(ad['budget']):.6f} SOL\n\n"
+            f"ℹ️ <b>Status:</b> {ad['status']}\n"
+            f"👉 <b>Total Clicks:</b> {ad['clicks']} clicks\n"
+            f"⏭ <b>Skipped:</b> {ad['skipped']} times\n"
         )
 
         buttons = [
@@ -1600,18 +1600,20 @@ async def watch_ads(update: Update, context: ContextTypes.DEFAULT_TYPE):
     budget = ad['budget']
     cpc = ad['cpc']
 
-    # Get optional fields safely
+    # Safely get optional fields (both new & old ad formats)
     title = details.get('title')
     description = details.get('description')
-    post_link = details.get('post_link', '')
 
-    # Build mission text dynamically
-    ad_text_parts = ["Mission: Read this post / increase views count"]
+    # Link handling: prefer 'post_link' for new ads, fall back to 'link' for old ads
+    post_link = details.get('post_link') or details.get('link', '')
+
+    # Build mission text dynamically (HTML-safe)
+    ad_text_parts = ["<b>Mission:</b> Read this post / increase views count"]
     if title:
-        ad_text_parts.append(f"\n\n📌 {title}")
+        ad_text_parts.append(f"\n\n📌 <b>{html.escape(title)}</b>")
     if description:
-        ad_text_parts.append(f"\n{description}")
-    ad_text_parts.append("\n\nPress WATCHED to complete this task")
+        ad_text_parts.append(f"\n{html.escape(description)}")
+    ad_text_parts.append("\n\nPress <b>WATCHED</b> to complete this task")
 
     keyboard = [
         [
@@ -1623,11 +1625,14 @@ async def watch_ads(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
         "".join(ad_text_parts),
-        reply_markup=reply_markup
+        reply_markup=reply_markup,
+        parse_mode="HTML"
     )
 
+    # Send link separately if valid
     if post_link.startswith("http"):
         await update.message.reply_text(post_link)
+
 
 # Skip Ad
 async def watch_skip(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1650,18 +1655,20 @@ async def watch_skip(update: Update, context: ContextTypes.DEFAULT_TYPE):
     budget = ad['budget']
     cpc = ad['cpc']
 
-    # Get optional fields safely
+    # Safely get optional fields (both new & old ad formats)
     title = details.get('title')
     description = details.get('description')
-    post_link = details.get('post_link', '')
 
-    # Build mission text dynamically
-    ad_text_parts = ["Mission: Read this post / increase views count"]
+    # Link handling: prefer 'post_link' for new ads, fall back to 'link' for old ads
+    post_link = details.get('post_link') or details.get('link', '')
+
+    # Build mission text dynamically (HTML-safe)
+    ad_text_parts = ["<b>Mission:</b> Read this post / increase views count"]
     if title:
-        ad_text_parts.append(f"\n\n📌 {title}")
+        ad_text_parts.append(f"\n\n📌 <b>{html.escape(title)}</b>")
     if description:
-        ad_text_parts.append(f"\n{description}")
-    ad_text_parts.append("\n\nPress WATCHED to complete this task")
+        ad_text_parts.append(f"\n{html.escape(description)}")
+    ad_text_parts.append("\n\nPress <b>WATCHED</b> to complete this task")
 
     keyboard = [
         [
@@ -1673,11 +1680,14 @@ async def watch_skip(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
         "".join(ad_text_parts),
-        reply_markup=reply_markup
+        reply_markup=reply_markup,
+        parse_mode="HTML"
     )
 
+    # Send link separately if valid
     if post_link.startswith("http"):
         await update.message.reply_text(post_link)
+
         
 # Mark Ad as Watched
 async def watch_watched(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1739,18 +1749,20 @@ async def watch_watched(update: Update, context: ContextTypes.DEFAULT_TYPE):
     budget = ad['budget']
     cpc = ad['cpc']
 
-    # Get optional fields safely
+    # Safely get optional fields (both new & old ad formats)
     title = details.get('title')
     description = details.get('description')
-    post_link = details.get('post_link', '')
 
-    # Build mission text dynamically
-    ad_text_parts = ["Mission: Read this post / increase views count"]
+    # Link handling: prefer 'post_link' for new ads, fall back to 'link' for old ads
+    post_link = details.get('post_link') or details.get('link', '')
+
+    # Build mission text dynamically (HTML-safe)
+    ad_text_parts = ["<b>Mission:</b> Read this post / increase views count"]
     if title:
-        ad_text_parts.append(f"\n\n📌 {title}")
+        ad_text_parts.append(f"\n\n📌 <b>{html.escape(title)}</b>")
     if description:
-        ad_text_parts.append(f"\n{description}")
-    ad_text_parts.append("\n\nPress WATCHED to complete this task")
+        ad_text_parts.append(f"\n{html.escape(description)}")
+    ad_text_parts.append("\n\nPress <b>WATCHED</b> to complete this task")
 
     keyboard = [
         [
@@ -1762,11 +1774,14 @@ async def watch_watched(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
         "".join(ad_text_parts),
-        reply_markup=reply_markup
+        reply_markup=reply_markup,
+        parse_mode="HTML"
     )
 
+    # Send link separately if valid
     if post_link.startswith("http"):
         await update.message.reply_text(post_link)
+
         
 # Define conversation states
 LINK_URL, LINK_TITLE, LINK_DESCRIPTION, LINK_CPC, LINK_BUDGET = range(5)
@@ -2454,6 +2469,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
