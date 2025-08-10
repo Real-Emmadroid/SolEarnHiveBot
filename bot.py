@@ -16,7 +16,7 @@ from telegram.error import BadRequest, TelegramError
 import traceback
 import html
 import time, hmac, hashlib
-from datetime import time as datetime_time
+from datetime import datetime  # if you need both
 import pytz
 from psycopg.rows import dict_row  # ✅ for psycopg3
 from psycopg import sql
@@ -1688,7 +1688,7 @@ async def watch_watched(update: Update, context: ContextTypes.DEFAULT_TYPE, ad_i
     # Check watch timer
     start_time = context.user_data.get(f"watch_start_{ad_id}")
     if not start_time:
-        await query.answer("⏳ Please start the ad before clicking 'Watched'.", show_alert=True)
+        await query.answer("⏳ Please click and view the post before clicking 'Watched'.", show_alert=True)
         return
     
     elapsed = time.time() - start_time
@@ -2474,6 +2474,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
