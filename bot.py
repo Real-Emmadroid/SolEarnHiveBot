@@ -11,6 +11,7 @@ import asyncio
 import string
 import requests
 import psycopg
+import math
 from telegram.error import BadRequest, TelegramError
 import traceback
 import html
@@ -312,6 +313,16 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
             parse_mode="Markdown"
         )
 
+    # Handle Skip Ad
+    elif data.startswith("watch_skip:"):
+        ad_id = int(data.split(":")[1])
+        await watch_skip(update, context, ad_id)
+
+    # Handle Watched Ad
+    elif data.startswith("watch_watched:"):
+        ad_id = int(data.split(":")[1])
+        await watch_watched(update, context, ad_id)
+
     else:
         await query.answer("Unknown button action.")
 
@@ -334,6 +345,8 @@ async def unified_message_handler(update: Update, context: ContextTypes.DEFAULT_
         await settings_command(update, context)
     elif text == "📊 My Ads":
         await my_ads(update, context)
+    elif text == "👁 Watch Ads":
+        await watch_ads(update, context)
     elif text == "➕ New Ad ➕":
         await newad_start(update, context)
     elif text == "➕ Deposit":
@@ -699,21 +712,58 @@ async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def my_ads(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
+    # Get ads count
     with get_db_connection() as conn:
-        with conn.cursor() as cursor:
-            cursor.execute("SELECT COUNT(*) FROM ads WHERE user_id = %s", (user_id,))
-            count = cursor.fetchone()[0]
+        with conn.cursor(dictionary=True) as cursor:
+            cursor.execute("SELECT COUNT(*) AS cnt FROM ads WHERE user_id = %s", (user_id,))
+            count = cursor.fetchone()['cnt']
 
+    # Send main "My Ads" menu first
     text = f"Here you can manage all your running/expired promotions. ({count} / {MAX_ADS_PER_USER})"
-
     keyboard = [
         ["➕ New Ad ➕"],
         ["🔙 Back"]
     ]
-
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
-
     await update.message.reply_text(text, reply_markup=reply_markup)
+
+    # Now fetch and send each ad
+    with get_db_connection() as conn:
+        with conn.cursor(dictionary=True) as cursor:
+            cursor.execute("""
+                SELECT a.id, a.user_id, a.ad_type, a.target_id, a.requirement, a.status,
+                       d.cpc, d.budget, d.clicks, d.skipped
+                FROM ads a
+                JOIN post_view_ads_details d ON a.id = d.ad_id
+                WHERE a.user_id = %s
+                ORDER BY a.created_at DESC
+            """, (user_id,))
+            ads = cursor.fetchall()
+
+    if not ads:
+        await update.message.reply_text("❌ You have no ads running.")
+        return
+
+    for ad in ads:
+        ad_text = (
+            f"⚙️ Campaign #{ad['id']} - 📃 {ad['ad_type']}\n"
+            f"🔗 {ad['requirement']}\n\n"
+            f"💰 CPC: {ad['cpc']:.6f} SOL\n"
+            f"💵 Budget: {ad['budget']:.6f} SOL\n\n"
+            f"ℹ️ Status: {ad['status']}\n"
+            f"👉 Total Clicks: {ad['clicks']} clicks\n"
+            f"⏭ Skipped: {ad['skipped']} times\n"
+        )
+
+        buttons = [
+            [InlineKeyboardButton("⏸ Pause" if ad['status'] == 'Active' else "▶ Resume", callback_data=f"toggle_ad:{ad['id']}"),
+             InlineKeyboardButton("❌ Delete", callback_data=f"delete_ad:{ad['id']}")],
+            [InlineKeyboardButton("🔺 Increase CPC", callback_data=f"increase_cpc:{ad['id']}"),
+             InlineKeyboardButton("💵 Edit Daily Budget", callback_data=f"edit_budget:{ad['id']}")]
+        ]
+
+        await update.message.reply_text(ad_text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="Markdown")
+
 
 promo_type_keyboard = [
     ["📣 Channel or Group", "🤖 Bot"],
@@ -1471,6 +1521,143 @@ async def post_views_cancel_handler(update: Update, context: ContextTypes.DEFAUL
     await start(update, context)
     return ConversationHandler.END
 
+# Async Fetch next available ad
+async def get_next_ad(user_id, conn):
+    async with conn.cursor() as cur:
+        await cur.execute("""
+            SELECT a.id, a.title, a.status, pvd.clicks, pvd.budget, pvd.cpc, pvd.post_link
+            FROM ads a
+            JOIN post_view_ads_details pvd ON pvd.ad_id = a.id
+            WHERE a.status = 'active'
+              AND pvd.clicks < FLOOR(pvd.budget / pvd.cpc)
+              AND a.id NOT IN (
+                  SELECT ad_id FROM post_view_ads_clicks WHERE user_id = %s
+              )
+            ORDER BY a.id ASC
+            LIMIT 1
+        """, (user_id,))
+        return await cur.fetchone()
+
+# Async Watch Ads command
+async def watch_ads(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    conn = context.bot_data['db']
+    user_id = update.effective_user.id
+
+    ad = await get_next_ad(user_id, conn)
+
+    if not ad:
+        await update.message.reply_text(
+            "‼️Aw snap! There are no more ads available.\n\nPress MY ADS to create a new task"
+        )
+        return
+
+    ad_id, title, status, clicks, budget, cpc, post_link = ad
+
+    keyboard = [
+        [
+            InlineKeyboardButton("⏭ Skip", callback_data=f"watch_skip:{ad_id}"),
+            InlineKeyboardButton("✅ Watched", callback_data=f"watch_watched:{ad_id}")
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await update.message.reply_text(
+        "Mission: Read this post / increase views count\n\nPress WATCHED to complete this task",
+        reply_markup=reply_markup
+    )
+
+    if post_link.startswith("http"):
+        await update.message.reply_text(post_link)
+
+# Async Callback: Skip
+async def watch_skip(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    ad_id = int(query.data.split(":")[1])
+
+    conn = context.bot_data['db']
+    user_id = query.from_user.id
+
+    ad = await get_next_ad(user_id, conn)
+    if not ad:
+        await query.edit_message_text(
+            "‼️Aw snap! There are no more ads available.\n\nPress MY ADS to create a new task"
+        )
+        return
+
+    ad_id, title, status, clicks, budget, cpc, post_link = ad
+    keyboard = [
+        [
+            InlineKeyboardButton("⏭ Skip", callback_data=f"watch_skip:{ad_id}"),
+            InlineKeyboardButton("✅ Watched", callback_data=f"watch_watched:{ad_id}")
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await query.edit_message_text(
+        "Mission: Read this post / increase views count\n\nPress WATCHED to complete this task",
+        reply_markup=reply_markup
+    )
+
+    if post_link.startswith("http"):
+        await context.bot.send_message(chat_id=query.message.chat_id, text=post_link)
+
+# Async Callback: Watched
+async def watch_watched(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    ad_id = int(query.data.split(":")[1])
+    user_id = query.from_user.id
+    conn = context.bot_data['db']
+
+    async with conn.cursor() as cur:
+        await cur.execute("SELECT 1 FROM post_view_ads_clicks WHERE ad_id=%s AND user_id=%s", (ad_id, user_id))
+        if await cur.fetchone():
+            await query.edit_message_text("You have already completed this ad.")
+            return
+
+        await cur.execute(
+            "INSERT INTO post_view_ads_clicks (ad_id, user_id) VALUES (%s, %s)",
+            (ad_id, user_id)
+        )
+        await cur.execute(
+            "UPDATE post_view_ads_details SET clicks = clicks + 1 WHERE ad_id = %s",
+            (ad_id,)
+        )
+        await cur.execute("""
+            SELECT clicks, budget, cpc FROM post_view_ads_details WHERE ad_id = %s
+        """, (ad_id,))
+        clicks, budget, cpc = await cur.fetchone()
+        if clicks >= math.floor(budget / cpc):
+            await cur.execute("UPDATE ads SET status = 'paused' WHERE id = %s", (ad_id,))
+
+    await conn.commit()
+
+    ad = await get_next_ad(user_id, conn)
+    if not ad:
+        await query.edit_message_text(
+            "‼️Aw snap! There are no more ads available.\n\nPress MY ADS to create a new task"
+        )
+        return
+
+    ad_id, title, status, clicks, budget, cpc, post_link = ad
+    keyboard = [
+        [
+            InlineKeyboardButton("⏭ Skip", callback_data=f"watch_skip:{ad_id}"),
+            InlineKeyboardButton("✅ Watched", callback_data=f"watch_watched:{ad_id}")
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await query.edit_message_text(
+        "Mission: Read this post / increase views count\n\nPress WATCHED to complete this task",
+        reply_markup=reply_markup
+    )
+
+    if post_link.startswith("http"):
+        await context.bot.send_message(chat_id=query.message.chat_id, text=post_link)
+
+
 
 # Define conversation states
 LINK_URL, LINK_TITLE, LINK_DESCRIPTION, LINK_CPC, LINK_BUDGET = range(5)
@@ -2158,6 +2345,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
