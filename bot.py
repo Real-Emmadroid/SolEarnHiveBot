@@ -1582,6 +1582,9 @@ def get_next_ad(user_id, exclude_ad_id=None):
                   AND a.id NOT IN (
                       SELECT ad_id FROM post_view_ads_clicks WHERE user_id = %s
                   )
+                  AND a.id NOT IN (
+                      SELECT ad_id FROM user_skipped_ads WHERE user_id = %s
+                  )
             """
             params = [user_id]
 
@@ -1647,34 +1650,80 @@ async def watch_ads(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(post_link)
 
 
-# Skip Ad — called as: await watch_skip(update, context, ad_id)
 async def watch_skip(update: Update, context: ContextTypes.DEFAULT_TYPE, ad_id=None):
     query = update.callback_query
-    await query.answer()
     user_id = query.from_user.id
 
-    # if callback handler passed ad_id, use it; if not, try parse from callback data
-    if ad_id is None:
-        try:
+    try:
+        await query.answer("⏭ Ad skipped")
+        
+        # Get ad_id from callback if not provided
+        if ad_id is None:
             ad_id = int(query.data.split(":", 1)[1])
-        except Exception:
-            ad_id = None
 
-    # Get next ad excluding the one user skipped
-    next_ad = get_next_ad(user_id, exclude_ad_id=ad_id)
-    if not next_ad:
-        await query.edit_message_text(
-            "‼️ Aw snap! There are no more ads available.\n\nPress MY ADS to create a new task"
+        # Record skipped ad in database
+        with get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS user_skipped_ads (
+                        user_id BIGINT,
+                        ad_id INTEGER,
+                        skipped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        PRIMARY KEY (user_id, ad_id)
+                    )
+                ''')
+                cursor.execute(
+                    "INSERT INTO user_skipped_ads (user_id, ad_id) VALUES (%s, %s) "
+                    "ON CONFLICT (user_id, ad_id) DO NOTHING",
+                    (user_id, ad_id)
+                )
+                conn.commit()
+
+        # Delete the original ad message
+        try:
+            await context.bot.delete_message(
+                chat_id=query.message.chat_id,
+                message_id=query.message.message_id
+            )
+        except Exception as e:
+            print(f"Couldn't delete message: {e}")
+
+        # Get next available ad (automatically excludes skipped ads)
+        next_ad = get_next_ad(user_id)
+        if not next_ad:
+            await context.bot.send_message(
+                chat_id=query.message.chat_id,
+                text="‼️ No more ads available right now"
+            )
+            return
+
+        # Send fresh ad
+        next_ad_id = next_ad["id"]
+        html_text, post_link = build_ad_text_and_link(next_ad)
+        
+        # Store new ad's start time
+        context.user_data[f"watch_start_{next_ad_id}"] = time.time()
+        
+        # Send new message
+        new_msg = await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text=html_text,
+            reply_markup=build_watch_keyboard(next_ad_id),
+            parse_mode="HTML"
         )
-        return
 
-    next_ad_id = next_ad["id"]
-    html_text, post_link = build_ad_text_and_link(next_ad)
+        # Store message ID for potential future deletion
+        context.user_data["last_ad_message_id"] = new_msg.message_id
 
-    await query.edit_message_text(html_text, reply_markup=build_watch_keyboard(next_ad_id), parse_mode="HTML")
-    if isinstance(post_link, str) and post_link.startswith("http"):
-        await context.bot.send_message(chat_id=query.message.chat_id, text=post_link)
+        if isinstance(post_link, str) and post_link.startswith("http"):
+            await context.bot.send_message(
+                chat_id=query.message.chat_id,
+                text=post_link
+            )
 
+    except Exception as e:
+        print(f"Error in watch_skip: {e}")
+        await query.answer("⚠️ Error skipping ad", show_alert=True)
 
 async def handle_watched_ad(update: Update, context: ContextTypes.DEFAULT_TYPE, ad_id: int):
     query = update.callback_query
@@ -2481,6 +2530,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
