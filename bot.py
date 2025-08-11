@@ -36,7 +36,7 @@ from telegram.ext import ApplicationBuilder, Application, CommandHandler, Conver
 from telegram.constants import ChatAction, ChatMemberStatus, ParseMode, MessageEntityType
 from database import init_databases
 from database import (
-    get_db_connection, get_user, update_balances, set_deposit_address, get_deposit_address, convert_earnings_to_general, add_al_deposit_bonus, add_referral_task_bonus
+    get_db_connection, get_user, update_balances, set_deposit_address, get_deposit_address, convert_earnings_to_general, add_referral_deposit_bonus, add_referral_task_bonus
 )
 
 # Configuration
@@ -2467,6 +2467,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
