@@ -324,8 +324,7 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
 
     # Handle Watched Ad
     elif data.startswith("watch_watched:"):
-        ad_id = int(data.split(":")[1])
-        await watch_watched(update, context, ad_id)
+        await watch_watched(update, context)
 
     else:
         await query.answer("Unknown button action.")
@@ -1673,18 +1672,18 @@ async def watch_skip(update: Update, context: ContextTypes.DEFAULT_TYPE, ad_id=N
         await context.bot.send_message(chat_id=query.message.chat_id, text=post_link)
 
 
-async def watch_watched(update: Update, context: ContextTypes.DEFAULT_TYPE, ad_id=None):
+async def watch_watched(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
 
-    # Extract ad_id if not provided
-    if ad_id is None:
-        try:
-            ad_id = int(query.data.split(":", 1)[1])
-        except Exception:
-            await query.edit_message_text("❌ Invalid ad id.")
-            return
+    try:
+        # Extract ad_id from callback data
+        _, ad_id_str = query.data.split(":", 1)
+        ad_id = int(ad_id_str)
+    except (ValueError, IndexError, AttributeError):
+        await query.edit_message_text("❌ Invalid ad id.")
+        return
 
     # Get timestamp using time.time()
     current_time = time.time()
@@ -2480,6 +2479,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
