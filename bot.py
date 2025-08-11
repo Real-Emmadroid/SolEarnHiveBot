@@ -1680,9 +1680,19 @@ async def handle_watched_ad(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     query = update.callback_query
     user_id = query.from_user.id
 
-    try:
-        await query.answer("Processing...")
+    # Verify ad viewing time
+    start_time = context.user_data.get(f"watch_start_{ad_id}")
+    if not start_time:
+        await query.answer("Please view the ad first!", show_alert=True)
+        return
 
+    elapsed = time.time() - start_time
+    if elapsed < 10:
+        await query.answer(f"Wait {10-int(elapsed)} more seconds!", show_alert=True)
+        return
+
+    # Process the watched ad
+    try:
         with get_db_connection() as conn:
             with conn.cursor() as cursor:
                 # Check for duplicate completion
@@ -1694,15 +1704,15 @@ async def handle_watched_ad(update: Update, context: ContextTypes.DEFAULT_TYPE, 
                     await query.edit_message_text("✅ Already completed!")
                     return
 
-                # Get CPC and convert to float immediately
+                # Calculate reward
                 cursor.execute(
                     "SELECT cpc FROM post_view_ads_details WHERE ad_id=%s",
                     (ad_id,)
                 )
-                cpc = float(cursor.fetchone()[0])  # Convert Decimal to float
+                cpc = cursor.fetchone()[0]
                 reward = round(cpc * 0.8, 6)
 
-                # Update records - using float values
+                # Update records
                 cursor.execute(
                     "INSERT INTO post_view_ads_clicks (ad_id, user_id) VALUES (%s, %s)",
                     (ad_id, user_id)
@@ -1711,56 +1721,78 @@ async def handle_watched_ad(update: Update, context: ContextTypes.DEFAULT_TYPE, 
                     "UPDATE post_view_ads_details SET clicks = clicks + 1 WHERE ad_id = %s",
                     (ad_id,)
                 )
+                # Update user balance in clickbotusers
                 cursor.execute(
-                    "UPDATE users SET payout_balance = payout_balance + %s WHERE user_id = %s",
-                    (float(reward), user_id)  # Ensure float value
+                    "UPDATE clickbotusers SET payout_balance = payout_balance + %s WHERE id = %s",
+                    (Decimal(str(reward)), user_id)
                 )
 
-                # Process referral (15%)
+                # Process referral bonus (15%)
                 cursor.execute(
-                    "SELECT referred_by FROM users WHERE user_id = %s",
+                    "SELECT referral_id FROM clickbotusers WHERE id = %s",
                     (user_id,)
                 )
                 referrer = cursor.fetchone()
                 if referrer and referrer[0]:
-                    bonus = round(float(reward) * 0.15, 6)  # Explicit float conversion
+                    bonus = round(reward * 0.15, 6)
                     cursor.execute(
-                        "UPDATE users SET referral_balance = referral_balance + %s WHERE user_id = %s",
-                        (float(bonus), referrer[0])  # Ensure float value
+                        "UPDATE clickbotusers SET payout_balance = payout_balance + %s WHERE id = %s",
+                        (Decimal(str(bonus)), referrer[0])
                     )
 
                 conn.commit()
 
-        # Success message
-        await query.edit_message_text(
-            f"🎉 Earned {reward:.6f} SOL!\n"
-            f"⏳ Loading next ad..."
+        # Show success message
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text=f"🎉 Earned {reward} SOL!\n"
+                 f"⏳ Loading next ad..."
         )
 
         # Show next ad
-        next_ad = get_next_ad(user_id, exclude_ad_id=ad_id)
-        if next_ad:
-            html_text, post_link = build_ad_text_and_link(next_ad)
-            await context.bot.send_message(
-                chat_id=query.message.chat_id,
-                text=html_text,
-                reply_markup=build_watch_keyboard(next_ad["id"]),
-                parse_mode="HTML"
-            )
-            if post_link.startswith("http"):
-                await context.bot.send_message(
-                    chat_id=query.message.chat_id,
-                    text=post_link
-                )
-        else:
-            await context.bot.send_message(
-                chat_id=query.message.chat_id,
-                text="‼️ No more ads available!"
-            )
+        await show_next_ad(update, context, user_id, ad_id)
 
     except Exception as e:
-        print(f"Error in handle_watched_ad: {e}")
-        await query.answer("⚠️ Failed to process", show_alert=True)
+        print(f"Watched ad error: {e}")
+        await query.answer("⚠️ Processing failed", show_alert=True)
+
+async def show_next_ad(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, previous_ad_id: int):
+    query = update.callback_query
+    
+    try:
+        # Delete previous ad message
+        await context.bot.delete_message(
+            chat_id=query.message.chat_id,
+            message_id=query.message.message_id
+        )
+    except:
+        pass
+
+    # Get and display next ad
+    next_ad = get_next_ad(user_id, exclude_ad_id=previous_ad_id)
+    if not next_ad:
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text="‼️ No more ads available!"
+        )
+        return
+
+    next_ad_id = next_ad["id"]
+    html_text, post_link = build_ad_text_and_link(next_ad)
+    context.user_data[f"watch_start_{next_ad_id}"] = time.time()
+
+    msg = await context.bot.send_message(
+        chat_id=query.message.chat_id,
+        text=html_text,
+        reply_markup=build_watch_keyboard(next_ad_id),
+        parse_mode="HTML"
+    )
+
+    if post_link.startswith("http"):
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text=post_link
+        )
         
         
 # Define conversation states
@@ -2449,6 +2481,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
