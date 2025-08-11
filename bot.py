@@ -1642,9 +1642,6 @@ async def watch_ads(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ad_id = ad["id"]
     html_text, post_link = build_ad_text_and_link(ad)
 
-    # Set start time for this ad (used by watch_watched for timer check)
-    context.user_data[f"watch_start_{ad_id}"] = time.time()
-
     await update.message.reply_text(html_text, reply_markup=build_watch_keyboard(ad_id), parse_mode="HTML")
     if isinstance(post_link, str) and post_link.startswith("http"):
         await update.message.reply_text(post_link)
@@ -1701,9 +1698,6 @@ async def watch_skip(update: Update, context: ContextTypes.DEFAULT_TYPE, ad_id=N
         next_ad_id = next_ad["id"]
         html_text, post_link = build_ad_text_and_link(next_ad)
         
-        # Store new ad's start time
-        context.user_data[f"watch_start_{next_ad_id}"] = time.time()
-        
         # Send new message
         new_msg = await context.bot.send_message(
             chat_id=query.message.chat_id,
@@ -1728,17 +1722,6 @@ async def watch_skip(update: Update, context: ContextTypes.DEFAULT_TYPE, ad_id=N
 async def handle_watched_ad(update: Update, context: ContextTypes.DEFAULT_TYPE, ad_id: int):
     query = update.callback_query
     user_id = query.from_user.id
-
-    # Verify ad viewing time
-    start_time = context.user_data.get(f"watch_start_{ad_id}")
-    if not start_time:
-        await query.answer("Please view the ad first!", show_alert=True)
-        return
-
-    elapsed = time.time() - start_time
-    if elapsed < 10:
-        await query.answer(f"Wait {10-int(elapsed)} more seconds!", show_alert=True)
-        return
 
     # Process the watched ad
     try:
@@ -1828,7 +1811,6 @@ async def show_next_ad(update: Update, context: ContextTypes.DEFAULT_TYPE, user_
 
     next_ad_id = next_ad["id"]
     html_text, post_link = build_ad_text_and_link(next_ad)
-    context.user_data[f"watch_start_{next_ad_id}"] = time.time()
 
     msg = await context.bot.send_message(
         chat_id=query.message.chat_id,
@@ -2530,6 +2512,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
