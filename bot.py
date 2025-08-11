@@ -324,7 +324,8 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
 
     # Handle Watched Ad
     elif data.startswith("watch_watched:"):
-        await watch_watched(update, context)
+        _, ad_id = data.split(":")
+        await handle_watched_ad(update, context, int(ad_id))
 
     else:
         await query.answer("Unknown button action.")
@@ -1672,160 +1673,124 @@ async def watch_skip(update: Update, context: ContextTypes.DEFAULT_TYPE, ad_id=N
         await context.bot.send_message(chat_id=query.message.chat_id, text=post_link)
 
 
-async def watch_watched(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_watched_ad(update: Update, context: ContextTypes.DEFAULT_TYPE, ad_id: int):
     query = update.callback_query
-    await query.answer()  # This acknowledges the button click immediately
     user_id = query.from_user.id
 
-    try:
-        # Extract ad_id from callback data
-        _, ad_id_str = query.data.split(":", 1)
-        ad_id = int(ad_id_str)
-    except (ValueError, IndexError, AttributeError) as e:
-        print(f"Error parsing ad_id: {e}")
-        await query.edit_message_text("❌ Invalid ad id.")
-        return
-
-    # Get timestamp using time.time()
-    current_time = time.time()
+    # Verify ad viewing time
     start_time = context.user_data.get(f"watch_start_{ad_id}")
-    
     if not start_time:
-        await query.answer("⏳ Please view the post before clicking 'Watched'.", show_alert=True)
+        await query.answer("Please view the ad first!", show_alert=True)
         return
-    
-    elapsed = current_time - start_time
+
+    elapsed = time.time() - start_time
     if elapsed < 10:
-        remaining = 10 - elapsed
-        await query.answer(
-            f"⏳ Please wait {int(remaining)} more seconds before clicking.", 
-            show_alert=True
-        )
+        await query.answer(f"Wait {10-int(elapsed)} more seconds!", show_alert=True)
         return
 
-    # Proceed with click recording
-    reward_amount = 0
-    referrer_bonus = 0
-    with get_db_connection() as conn:
-        with conn.cursor() as cursor:
-            # Prevent duplicate completions
-            cursor.execute(
-                "SELECT 1 FROM post_view_ads_clicks WHERE ad_id=%s AND user_id=%s",
-                (ad_id, user_id)
-            )
-            if cursor.fetchone():
-                await query.edit_message_text("✅ You have already completed this ad.")
-                return
+    # Process the watched ad
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                # Check for duplicate completion
+                cursor.execute(
+                    "SELECT 1 FROM post_view_ads_clicks WHERE ad_id=%s AND user_id=%s",
+                    (ad_id, user_id)
+                )
+                if cursor.fetchone():
+                    await query.edit_message_text("✅ Already completed!")
+                    return
 
-            # Get CPC for reward calculation
-            cursor.execute(
-                "SELECT cpc FROM post_view_ads_details WHERE ad_id=%s",
-                (ad_id,)
-            )
-            row = cursor.fetchone()
-            if row:
-                cpc_val = float(row[0])
-                reward_amount = round(cpc_val * 0.8, 6)  # 80% reward
+                # Calculate reward
+                cursor.execute(
+                    "SELECT cpc FROM post_view_ads_details WHERE ad_id=%s",
+                    (ad_id,)
+                )
+                cpc = cursor.fetchone()[0]
+                reward = round(cpc * 0.8, 6)
 
-            # Insert click record
-            cursor.execute(
-                "INSERT INTO post_view_ads_clicks (ad_id, user_id) VALUES (%s, %s)",
-                (ad_id, user_id)
-            )
-
-            # Increment clicks counter
-            cursor.execute(
-                "UPDATE post_view_ads_details SET clicks = clicks + 1 WHERE ad_id = %s",
-                (ad_id,)
-            )
-
-            # Add reward to user's balance
-            if reward_amount > 0:
-                # Update user's balance
+                # Update records
+                cursor.execute(
+                    "INSERT INTO post_view_ads_clicks (ad_id, user_id) VALUES (%s, %s)",
+                    (ad_id, user_id)
+                )
+                cursor.execute(
+                    "UPDATE post_view_ads_details SET clicks = clicks + 1 WHERE ad_id = %s",
+                    (ad_id,)
+                )
                 cursor.execute(
                     "UPDATE users SET payout_balance = payout_balance + %s WHERE user_id = %s",
-                    (reward_amount, user_id)
+                    (reward, user_id)
                 )
-                
-                # Check for and process referral bonus (15%)
+
+                # Process referral bonus (15%)
                 cursor.execute(
                     "SELECT referred_by FROM users WHERE user_id = %s",
                     (user_id,)
                 )
-                ref_result = cursor.fetchone()
-                if ref_result and ref_result[0]:
-                    referrer_id = ref_result[0]
-                    referrer_bonus = round(reward_amount * 0.15, 6)
+                referrer = cursor.fetchone()
+                if referrer and referrer[0]:
+                    bonus = round(reward * 0.15, 6)
                     cursor.execute(
                         "UPDATE users SET referral_balance = referral_balance + %s WHERE user_id = %s",
-                        (referrer_bonus, referrer_id)
+                        (bonus, referrer[0])
                     )
 
-            # Pause ad if budget exhausted
-            cursor.execute(
-                "SELECT clicks, budget, cpc FROM post_view_ads_details WHERE ad_id = %s",
-                (ad_id,)
-            )
-            row = cursor.fetchone()
-            if row:
-                clicks_val, budget_val, cpc_val = row
-                try:
-                    limit = math.floor(float(budget_val) / float(cpc_val)) if cpc_val and float(cpc_val) > 0 else None
-                except Exception:
-                    limit = None
-                if limit is not None and clicks_val >= limit:
-                    cursor.execute("UPDATE ads SET status = 'paused' WHERE id = %s", (ad_id,))
+                conn.commit()
 
-        conn.commit()
-
-    # Send completion messages
-    try:
-        if reward_amount > 0:
-            # Notify user
-            await context.bot.send_message(
-                chat_id=query.message.chat_id,
-                text=f"🎉 You earned {reward_amount:.6f} SOL from this task!"
-            )
-            
-            # Notify referrer if applicable
-            if referrer_bonus > 0:
-                await context.bot.send_message(
-                    chat_id=query.message.chat_id,
-                    text=f"💸 Your referrer earned {referrer_bonus:.6f} SOL bonus!"
-                )
-    except Exception as e:
-        print(f"Error sending completion message: {e}")
-
-    # Show next ad
-    try:
-        next_ad = get_next_ad(user_id, exclude_ad_id=ad_id)
-        if not next_ad:
-            await query.edit_message_text(
-                "‼️ No more ads available. Check back later!"
-            )
-            return
-
-        next_ad_id = next_ad["id"]
-        html_text, post_link = build_ad_text_and_link(next_ad)
-
-        # Store start time for the new ad
-        context.user_data[f"watch_start_{next_ad_id}"] = time.time()
-
-        await query.edit_message_text(
-            html_text,
-            reply_markup=build_watch_keyboard(next_ad_id),
-            parse_mode="HTML"
+        # Show success message
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text=f"🎉 Earned {reward} SOL!\n"
+                 f"⏳ Loading next ad..."
         )
 
-        if isinstance(post_link, str) and post_link.startswith("http"):
-            await context.bot.send_message(
-                chat_id=query.message.chat_id,
-                text=post_link
-            )
-    except Exception as e:
-        print(f"Error showing next ad: {e}")
-        await query.edit_message_text("⚠️ Error loading next ad. Please try again.")
+        # Show next ad
+        await show_next_ad(update, context, user_id, ad_id)
 
+    except Exception as e:
+        print(f"Watched ad error: {e}")
+        await query.answer("⚠️ Processing failed", show_alert=True)
+
+
+async def show_next_ad(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, previous_ad_id: int):
+    query = update.callback_query
+    
+    try:
+        # Delete previous ad message
+        await context.bot.delete_message(
+            chat_id=query.message.chat_id,
+            message_id=query.message.message_id
+        )
+    except:
+        pass
+
+    # Get and display next ad
+    next_ad = get_next_ad(user_id, exclude_ad_id=previous_ad_id)
+    if not next_ad:
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text="‼️ No more ads available!"
+        )
+        return
+
+    next_ad_id = next_ad["id"]
+    html_text, post_link = build_ad_text_and_link(next_ad)
+    context.user_data[f"watch_start_{next_ad_id}"] = time.time()
+
+    msg = await context.bot.send_message(
+        chat_id=query.message.chat_id,
+        text=html_text,
+        reply_markup=build_watch_keyboard(next_ad_id),
+        parse_mode="HTML"
+    )
+
+    if post_link.startswith("http"):
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text=post_link
+        )
+        
         
 # Define conversation states
 LINK_URL, LINK_TITLE, LINK_DESCRIPTION, LINK_CPC, LINK_BUDGET = range(5)
@@ -2513,6 +2478,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
