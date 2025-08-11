@@ -303,34 +303,37 @@ async def balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
     data = query.data
 
-    if data == "enter_password":
-        context.user_data['expecting_password'] = True
-        await password_button_callback(update, context)
+    try:
+        # Always answer callback query first
+        await query.answer()
 
-    elif data == "task_notification":
-        await query.edit_message_text(
-            "🔔 Task Notification settings will be available soon.\n\n"
-            "Stay tuned for the update!",
-            parse_mode="Markdown"
-        )
+        if data == "enter_password":
+            context.user_data['expecting_password'] = True
+            await password_button_callback(update, context)
 
-    # Handle Skip Ad
-    elif data.startswith("watch_skip:"):
-        ad_id = int(data.split(":")[1])
-        await watch_skip(update, context, ad_id)
+        elif data == "task_notification":
+            await query.edit_message_text(
+                "🔔 Task Notification settings will be available soon.\n\n"
+                "Stay tuned for the update!",
+                parse_mode="Markdown"
+            )
 
-    # Handle Watched Ad
-    elif data.startswith("watch_watched:"):
-        _, ad_id = data.split(":")
-        await handle_watched_ad(update, context, int(ad_id))
+        elif data.startswith("watch_skip:"):
+            _, ad_id = data.split(":")
+            await watch_skip(update, context, int(ad_id))
 
-    else:
-        await query.answer("Unknown button action.")
+        elif data.startswith("watch_watched:"):
+            _, ad_id = data.split(":")
+            await handle_watched_ad(update, context, int(ad_id))
 
+        else:
+            await query.answer("Unknown button action.")
 
+    except Exception as e:
+        print(f"Callback error: {e}")
+        await query.answer("⚠️ An error occurred. Please try again.")
 
 
 async def unified_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1752,7 +1755,6 @@ async def handle_watched_ad(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         print(f"Watched ad error: {e}")
         await query.answer("⚠️ Processing failed", show_alert=True)
 
-
 async def show_next_ad(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, previous_ad_id: int):
     query = update.callback_query
     
@@ -2478,6 +2480,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
