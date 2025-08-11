@@ -1723,11 +1723,10 @@ async def handle_watched_ad(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     query = update.callback_query
     user_id = query.from_user.id
 
-    # Process the watched ad
     try:
         with get_db_connection() as conn:
             with conn.cursor() as cursor:
-                # Check for duplicate completion
+                # Check for duplicates
                 cursor.execute(
                     "SELECT 1 FROM post_view_ads_clicks WHERE ad_id=%s AND user_id=%s",
                     (ad_id, user_id)
@@ -1736,12 +1735,12 @@ async def handle_watched_ad(update: Update, context: ContextTypes.DEFAULT_TYPE, 
                     await query.edit_message_text("✅ Already completed!")
                     return
 
-                # Calculate reward
+                # Get reward amount
                 cursor.execute(
                     "SELECT cpc FROM post_view_ads_details WHERE ad_id=%s",
                     (ad_id,)
                 )
-                cpc = cursor.fetchone()[0]
+                cpc = float(cursor.fetchone()[0])
                 reward = round(cpc * 0.8, 6)
 
                 # Update records
@@ -1753,13 +1752,12 @@ async def handle_watched_ad(update: Update, context: ContextTypes.DEFAULT_TYPE, 
                     "UPDATE post_view_ads_details SET clicks = clicks + 1 WHERE ad_id = %s",
                     (ad_id,)
                 )
-                # Update user balance in clickbotusers
                 cursor.execute(
                     "UPDATE clickbotusers SET payout_balance = payout_balance + %s WHERE id = %s",
                     (Decimal(str(reward)), user_id)
                 )
 
-                # Process referral bonus (15%)
+                # Process referral (15%)
                 cursor.execute(
                     "SELECT referral_id FROM clickbotusers WHERE id = %s",
                     (user_id,)
@@ -1774,56 +1772,46 @@ async def handle_watched_ad(update: Update, context: ContextTypes.DEFAULT_TYPE, 
 
                 conn.commit()
 
-        # Show success message
-        await context.bot.send_message(
-            chat_id=query.message.chat_id,
-            text=f"🎉 Earned {reward} SOL!\n"
-                 f"⏳ Loading next ad..."
-        )
+        # Success message
+        await query.edit_message_text(f"🎉 Earned {reward:.6f} SOL!")
 
         # Show next ad
         await show_next_ad(update, context, user_id, ad_id)
 
     except Exception as e:
-        print(f"Watched ad error: {e}")
+        print(f"Error in handle_watched_ad: {e}")
         await query.answer("⚠️ Processing failed", show_alert=True)
 
 async def show_next_ad(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, previous_ad_id: int):
-    query = update.callback_query
-    
     try:
-        # Delete previous ad message
-        await context.bot.delete_message(
-            chat_id=query.message.chat_id,
-            message_id=query.message.message_id
-        )
-    except:
-        pass
+        next_ad = get_next_ad(user_id, exclude_ad_id=previous_ad_id)
+        if not next_ad:
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text="‼️ No more ads available!"
+            )
+            return
 
-    # Get and display next ad
-    next_ad = get_next_ad(user_id, exclude_ad_id=previous_ad_id)
-    if not next_ad:
+        next_ad_id = next_ad["id"]
+        html_text, post_link = build_ad_text_and_link(next_ad)
+
+        # Send new message
         await context.bot.send_message(
-            chat_id=query.message.chat_id,
-            text="‼️ No more ads available!"
+            chat_id=update.effective_chat.id,
+            text=html_text,
+            reply_markup=build_watch_keyboard(next_ad_id),
+            parse_mode="HTML"
         )
-        return
 
-    next_ad_id = next_ad["id"]
-    html_text, post_link = build_ad_text_and_link(next_ad)
+        if post_link.startswith("http"):
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text=post_link
+            )
 
-    msg = await context.bot.send_message(
-        chat_id=query.message.chat_id,
-        text=html_text,
-        reply_markup=build_watch_keyboard(next_ad_id),
-        parse_mode="HTML"
-    )
-
-    if post_link.startswith("http"):
-        await context.bot.send_message(
-            chat_id=query.message.chat_id,
-            text=post_link
-        )
+    except Exception as e:
+        print(f"Error showing next ad: {e}")
+        await update.callback_query.answer("⚠️ Error loading ad", show_alert=True)
         
         
 # Define conversation states
@@ -2512,6 +2500,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
