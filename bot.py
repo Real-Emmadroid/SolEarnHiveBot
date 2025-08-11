@@ -1680,18 +1680,6 @@ async def handle_watched_ad(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     query = update.callback_query
     user_id = query.from_user.id
 
-    # Verify ad viewing time
-    start_time = context.user_data.get(f"watch_start_{ad_id}")
-    if not start_time:
-        await query.answer("Please view the ad first!", show_alert=True)
-        return
-
-    elapsed = time.time() - start_time
-    if elapsed < 10:
-        await query.answer(f"Wait {10-int(elapsed)} more seconds!", show_alert=True)
-        return
-
-    # Process the watched ad
     try:
         with get_db_connection() as conn:
             with conn.cursor() as cursor:
@@ -1704,7 +1692,7 @@ async def handle_watched_ad(update: Update, context: ContextTypes.DEFAULT_TYPE, 
                     await query.edit_message_text("✅ Already completed!")
                     return
 
-                # Calculate reward
+                # Get reward amount
                 cursor.execute(
                     "SELECT cpc FROM post_view_ads_details WHERE ad_id=%s",
                     (ad_id,)
@@ -1726,7 +1714,7 @@ async def handle_watched_ad(update: Update, context: ContextTypes.DEFAULT_TYPE, 
                     (reward, user_id)
                 )
 
-                # Process referral bonus (15%)
+                # Process referral (15%)
                 cursor.execute(
                     "SELECT referred_by FROM users WHERE user_id = %s",
                     (user_id,)
@@ -1741,57 +1729,36 @@ async def handle_watched_ad(update: Update, context: ContextTypes.DEFAULT_TYPE, 
 
                 conn.commit()
 
-        # Show success message
-        await context.bot.send_message(
-            chat_id=query.message.chat_id,
-            text=f"🎉 Earned {reward} SOL!\n"
-                 f"⏳ Loading next ad..."
+        # Success message
+        await query.edit_message_text(
+            f"🎉 Earned {reward} SOL!\n"
+            f"⏳ Loading next ad..."
         )
 
         # Show next ad
-        await show_next_ad(update, context, user_id, ad_id)
+        next_ad = get_next_ad(user_id, exclude_ad_id=ad_id)
+        if next_ad:
+            html_text, post_link = build_ad_text_and_link(next_ad)
+            await context.bot.send_message(
+                chat_id=query.message.chat_id,
+                text=html_text,
+                reply_markup=build_watch_keyboard(next_ad["id"]),
+                parse_mode="HTML"
+            )
+            if post_link.startswith("http"):
+                await context.bot.send_message(
+                    chat_id=query.message.chat_id,
+                    text=post_link
+                )
+        else:
+            await context.bot.send_message(
+                chat_id=query.message.chat_id,
+                text="‼️ No more ads available!"
+            )
 
     except Exception as e:
-        print(f"Watched ad error: {e}")
-        await query.answer("⚠️ Processing failed", show_alert=True)
-
-async def show_next_ad(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, previous_ad_id: int):
-    query = update.callback_query
-    
-    try:
-        # Delete previous ad message
-        await context.bot.delete_message(
-            chat_id=query.message.chat_id,
-            message_id=query.message.message_id
-        )
-    except:
-        pass
-
-    # Get and display next ad
-    next_ad = get_next_ad(user_id, exclude_ad_id=previous_ad_id)
-    if not next_ad:
-        await context.bot.send_message(
-            chat_id=query.message.chat_id,
-            text="‼️ No more ads available!"
-        )
-        return
-
-    next_ad_id = next_ad["id"]
-    html_text, post_link = build_ad_text_and_link(next_ad)
-    context.user_data[f"watch_start_{next_ad_id}"] = time.time()
-
-    msg = await context.bot.send_message(
-        chat_id=query.message.chat_id,
-        text=html_text,
-        reply_markup=build_watch_keyboard(next_ad_id),
-        parse_mode="HTML"
-    )
-
-    if post_link.startswith("http"):
-        await context.bot.send_message(
-            chat_id=query.message.chat_id,
-            text=post_link
-        )
+        print(f"Error in handle_watched_ad: {e}")
+        await query.answer("⚠️ Failed to process", show_alert=True)
         
         
 # Define conversation states
@@ -2480,6 +2447,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
