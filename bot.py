@@ -1681,21 +1681,28 @@ async def handle_watched_ad(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     user_id = query.from_user.id
 
     try:
-        # First acknowledge the button click
         await query.answer("Processing...")
 
         with get_db_connection() as conn:
             with conn.cursor() as cursor:
-                # Simple check if already completed
+                # Check for duplicate completion
                 cursor.execute(
                     "SELECT 1 FROM post_view_ads_clicks WHERE ad_id=%s AND user_id=%s",
                     (ad_id, user_id)
                 )
                 if cursor.fetchone():
-                    await query.edit_message_text("✅ You've already completed this ad")
+                    await query.edit_message_text("✅ Already completed!")
                     return
 
-                # Mark as watched - simplest possible version
+                # Get CPC and convert to float immediately
+                cursor.execute(
+                    "SELECT cpc FROM post_view_ads_details WHERE ad_id=%s",
+                    (ad_id,)
+                )
+                cpc = float(cursor.fetchone()[0])  # Convert Decimal to float
+                reward = round(cpc * 0.8, 6)
+
+                # Update records - using float values
                 cursor.execute(
                     "INSERT INTO post_view_ads_clicks (ad_id, user_id) VALUES (%s, %s)",
                     (ad_id, user_id)
@@ -1704,13 +1711,34 @@ async def handle_watched_ad(update: Update, context: ContextTypes.DEFAULT_TYPE, 
                     "UPDATE post_view_ads_details SET clicks = clicks + 1 WHERE ad_id = %s",
                     (ad_id,)
                 )
+                cursor.execute(
+                    "UPDATE users SET payout_balance = payout_balance + %s WHERE user_id = %s",
+                    (float(reward), user_id)  # Ensure float value
+                )
+
+                # Process referral (15%)
+                cursor.execute(
+                    "SELECT referred_by FROM users WHERE user_id = %s",
+                    (user_id,)
+                )
+                referrer = cursor.fetchone()
+                if referrer and referrer[0]:
+                    bonus = round(float(reward) * 0.15, 6)  # Explicit float conversion
+                    cursor.execute(
+                        "UPDATE users SET referral_balance = referral_balance + %s WHERE user_id = %s",
+                        (float(bonus), referrer[0])  # Ensure float value
+                    )
+
                 conn.commit()
 
-        # Simple success message
-        await query.edit_message_text("✔️ Ad marked as watched")
+        # Success message
+        await query.edit_message_text(
+            f"🎉 Earned {reward:.6f} SOL!\n"
+            f"⏳ Loading next ad..."
+        )
 
-        # Get and show next ad
-        next_ad = get_next_ad(user_id)
+        # Show next ad
+        next_ad = get_next_ad(user_id, exclude_ad_id=ad_id)
         if next_ad:
             html_text, post_link = build_ad_text_and_link(next_ad)
             await context.bot.send_message(
@@ -1727,12 +1755,12 @@ async def handle_watched_ad(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         else:
             await context.bot.send_message(
                 chat_id=query.message.chat_id,
-                text="No more ads available right now"
+                text="‼️ No more ads available!"
             )
 
     except Exception as e:
-        print(f"Error marking ad as watched: {e}")
-        await query.answer("Failed to mark as watched", show_alert=True)
+        print(f"Error in handle_watched_ad: {e}")
+        await query.answer("⚠️ Failed to process", show_alert=True)
         
         
 # Define conversation states
@@ -2421,6 +2449,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
