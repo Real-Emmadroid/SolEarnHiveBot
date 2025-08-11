@@ -15,6 +15,7 @@ import math
 from telegram.error import BadRequest, TelegramError
 import traceback
 import html
+import time
 import time, hmac, hashlib
 from datetime import datetime  # if you need both
 import pytz
@@ -1685,16 +1686,21 @@ async def watch_watched(update: Update, context: ContextTypes.DEFAULT_TYPE, ad_i
             await query.edit_message_text("❌ Invalid ad id.")
             return
 
-    # Check watch timer
+    # Get timestamp using time.time()
+    current_time = time.time()
     start_time = context.user_data.get(f"watch_start_{ad_id}")
+    
     if not start_time:
-        await query.answer("⏳ Please click and view the post before clicking 'Watched'.", show_alert=True)
+        await query.answer("⏳ Please view the post before clicking 'Watched'.", show_alert=True)
         return
     
-    elapsed = time.time() - start_time
-    wait_time = 10 - elapsed
-    if wait_time > 0:
-        await query.answer(f"⏳ Please wait {int(wait_time)} more seconds before clicking.", show_alert=True)
+    elapsed = current_time - start_time
+    if elapsed < 10:
+        remaining = 10 - elapsed
+        await query.answer(
+            f"⏳ Please wait {int(remaining)} more seconds before clicking.", 
+            show_alert=True
+        )
         return
 
     # Proceed with click recording
@@ -2474,6 +2480,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
