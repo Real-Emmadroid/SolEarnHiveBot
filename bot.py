@@ -12,6 +12,7 @@ import string
 import requests
 import psycopg
 import math
+from decimal import Decimal
 from telegram.error import BadRequest, TelegramError
 import traceback
 import html
@@ -2500,6 +2501,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
