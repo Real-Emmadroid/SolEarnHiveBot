@@ -1674,14 +1674,15 @@ async def watch_skip(update: Update, context: ContextTypes.DEFAULT_TYPE, ad_id=N
 
 async def watch_watched(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    await query.answer()  # This acknowledges the button click immediately
     user_id = query.from_user.id
 
     try:
         # Extract ad_id from callback data
         _, ad_id_str = query.data.split(":", 1)
         ad_id = int(ad_id_str)
-    except (ValueError, IndexError, AttributeError):
+    except (ValueError, IndexError, AttributeError) as e:
+        print(f"Error parsing ad_id: {e}")
         await query.edit_message_text("❌ Invalid ad id.")
         return
 
@@ -1704,6 +1705,7 @@ async def watch_watched(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Proceed with click recording
     reward_amount = 0
+    referrer_bonus = 0
     with get_db_connection() as conn:
         with conn.cursor() as cursor:
             # Prevent duplicate completions
@@ -1737,12 +1739,27 @@ async def watch_watched(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 (ad_id,)
             )
 
-            # Add reward to payout balance
+            # Add reward to user's balance
             if reward_amount > 0:
+                # Update user's balance
                 cursor.execute(
                     "UPDATE users SET payout_balance = payout_balance + %s WHERE user_id = %s",
                     (reward_amount, user_id)
                 )
+                
+                # Check for and process referral bonus (15%)
+                cursor.execute(
+                    "SELECT referred_by FROM users WHERE user_id = %s",
+                    (user_id,)
+                )
+                ref_result = cursor.fetchone()
+                if ref_result and ref_result[0]:
+                    referrer_id = ref_result[0]
+                    referrer_bonus = round(reward_amount * 0.15, 6)
+                    cursor.execute(
+                        "UPDATE users SET referral_balance = referral_balance + %s WHERE user_id = %s",
+                        (referrer_bonus, referrer_id)
+                    )
 
             # Pause ad if budget exhausted
             cursor.execute(
@@ -1761,36 +1778,53 @@ async def watch_watched(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         conn.commit()
 
-    # Congratulate user
-    if reward_amount > 0:
-        await context.bot.send_message(
-            chat_id=query.message.chat_id,
-            text=f"🎉 Congratulations! You have earned {reward_amount:.6f} SOL."
-        )
+    # Send completion messages
+    try:
+        if reward_amount > 0:
+            # Notify user
+            await context.bot.send_message(
+                chat_id=query.message.chat_id,
+                text=f"🎉 You earned {reward_amount:.6f} SOL from this task!"
+            )
+            
+            # Notify referrer if applicable
+            if referrer_bonus > 0:
+                await context.bot.send_message(
+                    chat_id=query.message.chat_id,
+                    text=f"💸 Your referrer earned {referrer_bonus:.6f} SOL bonus!"
+                )
+    except Exception as e:
+        print(f"Error sending completion message: {e}")
 
     # Show next ad
-    next_ad = get_next_ad(user_id, exclude_ad_id=ad_id)
-    if not next_ad:
+    try:
+        next_ad = get_next_ad(user_id, exclude_ad_id=ad_id)
+        if not next_ad:
+            await query.edit_message_text(
+                "‼️ No more ads available. Check back later!"
+            )
+            return
+
+        next_ad_id = next_ad["id"]
+        html_text, post_link = build_ad_text_and_link(next_ad)
+
+        # Store start time for the new ad
+        context.user_data[f"watch_start_{next_ad_id}"] = time.time()
+
         await query.edit_message_text(
-            "‼️ Aw snap! There are no more ads available.\n\nPress MY ADS to create a new task"
+            html_text,
+            reply_markup=build_watch_keyboard(next_ad_id),
+            parse_mode="HTML"
         )
-        return
 
-    next_ad_id = next_ad["id"]
-    html_text, post_link = build_ad_text_and_link(next_ad)
-
-    # Store start time for the new ad
-    context.user_data[f"watch_start_{next_ad_id}"] = time.time()
-
-    await query.edit_message_text(
-        html_text,
-        reply_markup=build_watch_keyboard(next_ad_id),
-        parse_mode="HTML"
-    )
-
-    if isinstance(post_link, str) and post_link.startswith("http"):
-        await context.bot.send_message(chat_id=query.message.chat_id, text=post_link)
-
+        if isinstance(post_link, str) and post_link.startswith("http"):
+            await context.bot.send_message(
+                chat_id=query.message.chat_id,
+                text=post_link
+            )
+    except Exception as e:
+        print(f"Error showing next ad: {e}")
+        await query.edit_message_text("⚠️ Error loading next ad. Please try again.")
 
         
 # Define conversation states
@@ -2479,6 +2513,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
