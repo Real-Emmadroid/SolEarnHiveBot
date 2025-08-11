@@ -1643,6 +1643,9 @@ async def watch_ads(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ad_id = ad["id"]
     html_text, post_link = build_ad_text_and_link(ad)
 
+    # Store start time for timer functionality
+    context.user_data[f"watch_start_{ad_id}"] = time.time()
+
     await update.message.reply_text(html_text, reply_markup=build_watch_keyboard(ad_id), parse_mode="HTML")
     if isinstance(post_link, str) and post_link.startswith("http"):
         await update.message.reply_text(post_link)
@@ -1725,6 +1728,17 @@ async def handle_watched_ad(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     user_id = query.from_user.id
 
     try:
+        # Timer check (10 seconds minimum view time)
+        start_time = context.user_data.get(f"watch_start_{ad_id}")
+        if not start_time:
+            await query.answer("⏳ Please view the ad first!", show_alert=True)
+            return
+        
+        elapsed = time.time() - start_time
+        if elapsed < 10:
+            await query.answer(f"⏳ Please wait {10-int(elapsed)} more seconds!", show_alert=True)
+            return
+
         with get_db_connection() as conn:
             with conn.cursor() as cursor:
                 # Check for duplicates
@@ -1795,6 +1809,9 @@ async def show_next_ad(update: Update, context: ContextTypes.DEFAULT_TYPE, user_
 
         next_ad_id = next_ad["id"]
         html_text, post_link = build_ad_text_and_link(next_ad)
+        
+        # Store start time for timer
+        context.user_data[f"watch_start_{next_ad_id}"] = time.time()
 
         # Send new message
         await context.bot.send_message(
@@ -1813,6 +1830,7 @@ async def show_next_ad(update: Update, context: ContextTypes.DEFAULT_TYPE, user_
     except Exception as e:
         print(f"Error showing next ad: {e}")
         await update.callback_query.answer("⚠️ Error loading ad", show_alert=True)
+        
         
         
 # Define conversation states
@@ -2501,6 +2519,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
