@@ -1586,7 +1586,7 @@ def get_next_ad(user_id, exclude_ad_id=None):
                       SELECT ad_id FROM user_skipped_ads WHERE user_id = %s
                   )
             """
-            params = [user_id]
+            params = [user_id, user_id]
 
             # exclude the ad we just showed (so Skip won't return the same ad)
             if exclude_ad_id is not None:
@@ -2530,6 +2530,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
