@@ -370,9 +370,11 @@ async def unified_message_handler(update: Update, context: ContextTypes.DEFAULT_
     user_id = update.effective_user.id
 
     # Handle forwarded messages first
-    if update.message.forward_from or update.message.forward_from_chat:
-        await handle_forwarded_verification(update, context)
-        return
+    if update.message.forward_origin:
+        user_state = context.user_data.get("state")
+        if user_state == "awaiting_forward_verification":
+            await handle_forwarded_verification(update, context)
+            return
 
     if text == "💰 Balance":
         await balance_command(update, context)
@@ -2624,35 +2626,6 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
