@@ -193,34 +193,54 @@ REPLY_KEYBOARD = [
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    user_id = user.id 
+    user_id = user.id
     chat_id = update.effective_chat.id
     args = context.args  # e.g., after /start 12345
     referral_id = None
 
+    # Handle referral code
     if args and args[0].isdigit():
         referral_id = int(args[0])
         if referral_id == user_id:
             referral_id = None  # Prevent self-referral
 
-    with get_db_connection() as conn:
-        with conn.cursor() as cursor:
-            # Check if user exists
-            cursor.execute("SELECT 1 FROM clickbotusers WHERE id = %s", (user_id,))
-            if not cursor.fetchone():
-                # Insert only if not exists
-                cursor.execute("""
-                    INSERT INTO clickbotusers (id, general_balance, payout_balance, referral_id)
-                    VALUES (%s, 0, 0, %s)
-                """, (user_id, referral_id))
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                # ✅ Track only private chat users for DM broadcast
+                if update.effective_chat.type == "private":
+                    cursor.execute('''
+                        CREATE TABLE IF NOT EXISTS broadcast_clickbot (
+                            user_id BIGINT PRIMARY KEY
+                        )
+                    ''')
+                    cursor.execute('''
+                        INSERT INTO broadcast_clickbot (user_id)
+                        VALUES (%s)
+                        ON CONFLICT(user_id) DO NOTHING
+                    ''', (user_id,))
+                    logger.info(f"✅ Tracked user {user_id} for broadcast.")
+
+                # ✅ Main user table insert
+                cursor.execute("SELECT 1 FROM clickbotusers WHERE id = %s", (user_id,))
+                if not cursor.fetchone():
+                    cursor.execute("""
+                        INSERT INTO clickbotusers (id, general_balance, payout_balance, referral_id)
+                        VALUES (%s, 0, 0, %s)
+                    """, (user_id, referral_id))
+
                 conn.commit()
-    
-    
+
+    except Exception as e:
+        logger.error(f"❌ Failed in /start for user {user_id}: {e}")
+
+    # ✅ Reply to user
     await update.message.reply_text(
         text=START_TEXT,
         parse_mode="Markdown",
         reply_markup=ReplyKeyboardMarkup(REPLY_KEYBOARD, resize_keyboard=True)
     )
+
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -289,7 +309,7 @@ async def balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = (
         f"🔸️ *Balance:* \n  {general:.6f} SOL\n\n"
         f"🔸️ *Available for Payout:* \n  {payout:.6f} SOL\n"
-        f"-----------------------------------------------------------\n"
+        f"----------------------------------------------\n"
         f"Click《Deposit》to generate balance topup invoice.\n\n"
         f"💱 *Top-up Methods*\n"
         f"• *Multi coins*"
@@ -687,19 +707,19 @@ async def referrals_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Inline button for sharing
     keyboard = [
-        [InlineKeyboardButton("📤 Share", url=share_url)]
+        [InlineKeyboardButton("Share ➠", url=share_url)]
     ]
 
     text = (
         f"🔍 You have *{total_refs}* referrals, and earned *{payout_balance:.6f} SOL*.\n\n"
-        f"To refer people to the bot, send them this link:\n"
-        f"`{referral_link}`\n\n"
+        f"To refer people to the bot, send them this link:\n\n"
+        f"{referral_link}\n\n"
         "💰 You will earn 15% of your friends' earnings from tasks, "
         "and 2% if your friend deposits.\n\n"
         "_You can withdraw affiliate income or spend it on ADS!_"
     )
 
-    await update.message.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+    await update.message.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard), disable_web_page_preview=True)
 
 
 async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1758,23 +1778,23 @@ async def handle_watched_ad(update: Update, context: ContextTypes.DEFAULT_TYPE, 
                     (Decimal(str(reward)), user_id)
                 )
 
-                # Process al (15%)
+                # Process referral (15%)
                 cursor.execute(
-                    "SELECT al_id FROM clickbotusers WHERE id = %s",
+                    "SELECT referral_id FROM clickbotusers WHERE id = %s",
                     (user_id,)
                 )
-                er = cursor.fetchone()
-                if er and er[0]:
+                referrer = cursor.fetchone()
+                if referrer and referrer[0]:
                     bonus = round(reward * 0.15, 6)
                     cursor.execute(
                         "UPDATE clickbotusers SET payout_balance = payout_balance + %s WHERE id = %s",
-                        (Decimal(str(bonus)), er[0])
+                        (Decimal(str(bonus)), referrer[0])
                     )
 
                 conn.commit()
 
         # Success message
-        await query.edit_message_text(f"🎉 Congratulations! You've earned\n {reward:.6f} SOL!")
+        await query.edit_message_text(f"🎉 Congratulations! You've earned \n{reward:.6f} SOL!")
 
     except Exception as e:
         print(f"Error in handle_watched_ad: {e}")
@@ -2141,126 +2161,6 @@ async def error_handler(update: Update, context: CallbackContext):
         print(f"Unhandled error: {error}")
 
 
-async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Send an exact copy of the replied message (text/media) to all registered chats."""
-
-    if update.effective_user.id != CREATOR_ID:
-        return
-
-    if not update.message.reply_to_message:
-        await update.message.reply_text("❗Please reply to the message you want to broadcast.")
-        return
-
-    original = update.message.reply_to_message
-
-    # Ensure broadcast table exists
-    with get_db_connection() as conn:
-        with conn.cursor() as cursor:
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS broadcast_chats (
-                    chat_id BIGINT PRIMARY KEY
-                )
-            ''')
-            conn.commit()
-
-    # Fetch all chat IDs
-    with get_db_connection() as conn:
-        with conn.cursor() as cursor:
-            cursor.execute('SELECT chat_id FROM broadcast_chats')
-            chat_ids = [row[0] for row in cursor.fetchall()]
-
-    success, failed = 0, 0
-
-    for chat_id in chat_ids:
-        try:
-            if original.photo:
-                await context.bot.send_photo(
-                    chat_id=chat_id,
-                    photo=original.photo[-1].file_id,
-                    caption=original.caption or "",
-                    caption_entities=original.caption_entities or None
-                )
-            elif original.video:
-                await context.bot.send_video(
-                    chat_id=chat_id,
-                    video=original.video.file_id,
-                    caption=original.caption or "",
-                    caption_entities=original.caption_entities or None
-                )
-            elif original.text:
-                await context.bot.send_message(
-                    chat_id=chat_id,
-                    text=original.text,
-                    entities=original.entities or None
-                )
-            else:
-                # Fallback: forward message as-is
-                await context.bot.forward_message(
-                    chat_id=chat_id,
-                    from_chat_id=original.chat.id,
-                    message_id=original.message_id
-                )
-            success += 1
-        except Exception as e:
-            logger.error(f"Broadcast failed to {chat_id}: {e}")
-            failed += 1
-
-    await update.message.reply_text(
-        f"📢 Broadcast complete!\n\n✅ Sent: {success}\n❌ Failed: {failed}"
-    )
-
-    
-async def track_chats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Track all chats where the bot is added."""
-    chat_id = update.effective_chat.id
-
-    with get_db_connection() as conn:
-        with conn.cursor() as cursor:
-            cursor.execute('''
-                INSERT INTO broadcast_chats (chat_id) 
-                VALUES (%s) 
-                ON CONFLICT(chat_id) DO NOTHING
-            ''', (chat_id,))
-            conn.commit()
-
-async def track_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message:
-        return
-
-    user = update.effective_user
-    chat = update.effective_chat
-
-    # Skip if not in group
-    if chat.type not in ["group", "supergroup"]:
-        return
-
-    if user.is_bot:
-        return
-
-    with get_db_connection() as conn:
-        with conn.cursor() as cursor:
-            cursor.execute("""
-                INSERT INTO group_users (chat_id, user_id, username)
-                VALUES (%s, %s, %s)
-                ON CONFLICT (chat_id, user_id) DO UPDATE SET username = EXCLUDED.username
-            """, (chat.id, user.id, user.username or user.full_name))
-            conn.commit()
-
-
-async def promotrack_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_chat.type != "private":
-        return
-
-    user_id = update.effective_user.id
-    with get_db_connection() as conn:
-        with conn.cursor() as cursor:
-            cursor.execute('''
-                INSERT INTO broadcast_users (user_id) 
-                VALUES (%s) 
-                ON CONFLICT(user_id) DO NOTHING
-            ''', (user_id,))
-            conn.commit()
-
 async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != CREATOR_ID:
         return
@@ -2275,7 +2175,7 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     with get_db_connection() as conn:
         with conn.cursor() as cursor:
             cursor.execute('''
-                CREATE TABLE IF NOT EXISTS broadcast_users (
+                CREATE TABLE IF NOT EXISTS broadcast_clickbot (
                     user_id BIGINT PRIMARY KEY
                 )
             ''')
@@ -2284,7 +2184,7 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Fetch all user IDs
     with get_db_connection() as conn:
         with conn.cursor() as cursor:
-            cursor.execute('SELECT user_id FROM broadcast_users')
+            cursor.execute('SELECT user_id FROM broadcast_clickbot')
             user_ids = [row[0] for row in cursor.fetchall()]
 
     success, failed = 0, 0
@@ -2467,6 +2367,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
