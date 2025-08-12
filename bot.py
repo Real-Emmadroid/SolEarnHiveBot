@@ -1346,12 +1346,11 @@ async def bot_cancel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
 def get_next_bot_ad(user_id, exclude_ad_id=None):
     with get_db_connection() as conn:
         with conn.cursor(row_factory=dict_row) as cursor:
-            # First get the basic ad info
             cursor.execute("""
                 SELECT 
                     a.id,
                     a.ad_type,
-                    a.details,
+                    a.details,  # This is JSONB (already a dict)
                     a.status,
                     bad.title,
                     bad.description,
@@ -1377,15 +1376,10 @@ def get_next_bot_ad(user_id, exclude_ad_id=None):
             if not ad:
                 return None
 
-            # Now properly extract the bot_link from JSON details
-            try:
-                details = json.loads(ad["details"])
-                ad["bot_link"] = details.get("bot_link", "")
-                ad["bot_username"] = details.get("bot_username", "")
-            except (json.JSONDecodeError, AttributeError) as e:
-                print(f"Error parsing ad details: {e}")
-                ad["bot_link"] = ""
-                ad["bot_username"] = ""
+            # Directly access the details dict (no json.loads needed)
+            details = ad.get("details", {})
+            ad["bot_link"] = details.get("bot_link", "")
+            ad["bot_username"] = details.get("bot_username", "")
 
             return ad
 
@@ -2720,6 +2714,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
