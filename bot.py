@@ -1406,13 +1406,18 @@ def build_bot_ad_text(ad):
 
 
 def build_bot_keyboard(ad_id, bot_link):
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🤖 Open Bot", url=bot_link)],
-        [
-            InlineKeyboardButton("⏭ Skip", callback_data=f"bot_skip:{ad_id}"),
-            InlineKeyboardButton("✅ Started", callback_data=f"bot_started:{ad_id}")
-        ]
+    buttons = []
+
+    # Only add the Open Bot button if we have a valid URL
+    if bot_link and bot_link.startswith("http"):
+        buttons.append([InlineKeyboardButton("🤖 Open Bot", url=bot_link)])
+
+    buttons.append([
+        InlineKeyboardButton("⏭ Skip", callback_data=f"bot_skip:{ad_id}"),
+        InlineKeyboardButton("✅ Started", callback_data=f"bot_started:{ad_id}")
     ])
+
+    return InlineKeyboardMarkup(buttons)
 
 
 # Command: show first available Message Bot ad
@@ -2632,6 +2637,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
