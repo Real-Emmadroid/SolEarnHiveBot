@@ -349,6 +349,14 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
             _, ad_id = data.split(":")
             await handle_watched_ad(update, context, int(ad_id))
 
+        elif data.startswith("bot_skip:"):
+            _, ad_id = data.split(":")
+            await bot_skip(update, context, int(ad_id))
+
+        elif data.startswith("bot_started:"):
+            _, ad_id = data.split(":")
+            await handle_bot_started(update, context, int(ad_id))
+
         else:
             await query.answer("Unknown button action.")
 
@@ -375,6 +383,8 @@ async def unified_message_handler(update: Update, context: ContextTypes.DEFAULT_
         await my_ads(update, context)
     elif text == "👁 Watch Ads":
         await watch_ads(update, context)
+    elif text == "🤖 Message Bots":
+        await message_bot_ads(update, context)
     elif text == "➕ New Ad ➕":
         await newad_start(update, context)
     elif text == "➕ Deposit":
@@ -1262,7 +1272,7 @@ async def bot_budget_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 VALUES (%s, %s, %s, %s, now(), now() + interval '30 days')
                 RETURNING id
                 """,
-                (user_id, "bot_promotion", json.dumps(ad_data), "running"),
+                (user_id, "bot_promotion", json.dumps(ad_data), "active"),
             )
             ad_id = cursor.fetchone()[0]
 
@@ -1323,6 +1333,222 @@ async def bot_cancel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
     # Return to main menu
     await start(update, context)
     return ConversationHandler.END
+
+
+# Helper: get next available Message Bot ad
+def get_next_bot_ad(user_id, exclude_ad_id=None):
+    with get_db_connection() as conn:
+        with conn.cursor(row_factory=dict_row) as cursor:
+            sql = """
+                SELECT 
+                    a.id,
+                    a.ad_type,
+                    a.details,
+                    a.status,
+                    bad.clicks,
+                    bad.budget,
+                    bad.cpc
+                FROM ads a
+                JOIN bot_ads_details bad ON bad.ad_id = a.id
+                WHERE a.status = 'active'
+                  AND bad.clicks < FLOOR(bad.budget / bad.cpc)
+                  AND a.id NOT IN (
+                      SELECT ad_id FROM bot_ads_clicks WHERE user_id = %s
+                  )
+                  AND a.id NOT IN (
+                      SELECT ad_id FROM user_skipped_ads WHERE user_id = %s
+                  )
+            """
+            params = [user_id, user_id]
+
+            if exclude_ad_id is not None:
+                sql += " AND a.id <> %s"
+                params.append(exclude_ad_id)
+
+            sql += " ORDER BY a.created_at ASC LIMIT 1"
+            cursor.execute(sql, tuple(params))
+            return cursor.fetchone()
+
+
+def build_bot_ad_text(ad):
+    details = ad.get("details") or {}
+    bot_link = details.get("bot_link") or ""
+    title = details.get("title", "Start this bot")
+    description = details.get("description", "")
+
+    text_parts = [f"<b>Mission:</b> Start and interact with the bot\n\n"]
+    text_parts.append(f"🤖 <b>{html.escape(title)}</b>\n")
+    if description:
+        text_parts.append(f"{html.escape(description)}\n")
+    text_parts.append("\nPress <b>STARTED</b> after you’ve interacted with the bot.")
+
+    return "".join(text_parts), bot_link
+
+
+def build_bot_keyboard(ad_id, bot_link):
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🤖 Open Bot", url=bot_link)],
+        [
+            InlineKeyboardButton("⏭ Skip", callback_data=f"bot_skip:{ad_id}"),
+            InlineKeyboardButton("✅ Started", callback_data=f"bot_started:{ad_id}")
+        ]
+    ])
+
+
+# Command: show first available Message Bot ad
+async def message_bot_ads(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    ad = get_next_bot_ad(user_id)
+
+    if not ad:
+        await update.message.reply_text("‼️ No Message Bot ads available right now.")
+        return
+
+    ad_id = ad["id"]
+    html_text, bot_link = build_bot_ad_text(ad)
+
+    await update.message.reply_text(
+        html_text,
+        parse_mode="HTML",
+        reply_markup=build_bot_keyboard(ad_id, bot_link)
+    )
+
+
+# Skip Message Bot ad
+async def bot_skip(update: Update, context: ContextTypes.DEFAULT_TYPE, ad_id=None):
+    query = update.callback_query
+    user_id = query.from_user.id
+    chat_id = query.message.chat_id
+    message_id = query.message.message_id
+
+    await query.answer("⏭ Ad skipped")
+
+    if ad_id is None:
+        ad_id = int(query.data.split(":", 1)[1])
+
+    # Store skipped ad in DB
+    with get_db_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS user_skipped_ads (
+                    user_id BIGINT,
+                    ad_id INTEGER,
+                    skipped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (user_id, ad_id)
+                )
+            """)
+            cursor.execute("""
+                INSERT INTO user_skipped_ads (user_id, ad_id)
+                VALUES (%s, %s)
+                ON CONFLICT (user_id, ad_id) DO NOTHING
+            """, (user_id, ad_id))
+            conn.commit()
+
+    # Get next ad
+    next_ad = get_next_bot_ad(user_id, exclude_ad_id=ad_id)
+
+    # Delete old ad message
+    try:
+        await context.bot.delete_message(chat_id, message_id)
+    except Exception as e:
+        print(f"Failed to delete message: {e}")
+
+    if not next_ad:
+        await context.bot.send_message(chat_id, "‼️ No more ads available.")
+        return
+
+    # Send next ad
+    next_ad_id = next_ad["id"]
+    html_text, bot_link = build_bot_ad_text(next_ad)
+    await context.bot.send_message(
+        chat_id,
+        html_text,
+        parse_mode="HTML",
+        reply_markup=build_bot_keyboard(next_ad_id, bot_link)
+    )
+
+
+
+# Handle Started button with forward verification
+async def handle_bot_started(update: Update, context: ContextTypes.DEFAULT_TYPE, ad_id=None):
+    query = update.callback_query
+    user_id = query.from_user.id
+    await query.answer()
+
+    if ad_id is None:
+        ad_id = int(query.data.split(":", 1)[1])
+
+    with get_db_connection() as conn:
+        with conn.cursor() as cursor:
+            # Check if already completed
+            cursor.execute("""
+                SELECT 1 FROM bot_ads_clicks WHERE ad_id=%s AND user_id=%s
+            """, (ad_id, user_id))
+            if cursor.fetchone():
+                await query.edit_message_text("✅ Already completed!")
+                return
+
+            # Get promoted bot username & cpc from DB
+            cursor.execute("""
+                SELECT bot_username, cpc FROM bot_ads_details WHERE ad_id=%s
+            """, (ad_id,))
+            row = cursor.fetchone()
+            if not row:
+                await query.edit_message_text("⚠️ Ad not found.")
+                return
+            promoted_bot_username, cpc = row
+            cpc = float(cpc)
+
+    # Ask user to forward the "Bot started" message for verification
+    await query.edit_message_text(
+        f"📩 Please forward the bot's 'You started the bot' message here from @{promoted_bot_username}.\n"
+        "This is to verify you actually started it."
+    )
+
+    # Wait for next message from user
+    message = await context.bot.wait_for_message(chat_id=user_id, timeout=120)
+    if not message or not message.forward_from:
+        await context.bot.send_message(user_id, "❌ Verification failed — No forwarded message detected.")
+        return
+
+    # Check if forwarded message is from the promoted bot
+    if message.forward_from.username.lower() != promoted_bot_username.lower():
+        await context.bot.send_message(user_id, "❌ Verification failed — This is not the correct bot.")
+        return
+
+    # Passed verification — award reward
+    with get_db_connection() as conn:
+        with conn.cursor() as cursor:
+            reward = round(cpc * 0.8, 6)
+
+            cursor.execute("""
+                INSERT INTO bot_ads_clicks (ad_id, user_id)
+                VALUES (%s, %s)
+            """, (ad_id, user_id))
+            cursor.execute("""
+                UPDATE bot_ads_details SET clicks = clicks + 1 WHERE ad_id=%s
+            """, (ad_id,))
+            cursor.execute("""
+                UPDATE clickbotusers
+                SET payout_balance = payout_balance + %s
+                WHERE id=%s
+            """, (Decimal(str(reward)), user_id))
+
+            # Referral bonus
+            cursor.execute("SELECT referral_id FROM clickbotusers WHERE id=%s", (user_id,))
+            referrer = cursor.fetchone()
+            if referrer and referrer[0]:
+                bonus = round(reward * 0.15, 6)
+                cursor.execute("""
+                    UPDATE clickbotusers
+                    SET payout_balance = payout_balance + %s
+                    WHERE id=%s
+                """, (Decimal(str(bonus)), referrer[0]))
+
+            conn.commit()
+
+    await context.bot.send_message(user_id, f"🎉 You earned {reward:.6f} SOL for starting the bot!")
+
 
 
 POST_MSG, POST_CPC, POST_BUDGET = range(3)
@@ -2367,6 +2593,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
