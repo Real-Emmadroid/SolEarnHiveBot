@@ -1409,13 +1409,18 @@ def build_bot_ad_text(ad):
 
 
 def build_bot_keyboard(ad_id, bot_link):
-    return InlineKeyboardMarkup([
+    # Ensure bot_link is a full valid URL (just as extra safety)
+    if not bot_link.startswith("http"):
+        bot_link = f"https://t.me/{bot_link.lstrip('@')}"
+
+    keyboard = [
         [InlineKeyboardButton("🤖 Open Bot", url=bot_link)],
         [
             InlineKeyboardButton("⏭ Skip", callback_data=f"bot_skip:{ad_id}"),
             InlineKeyboardButton("✅ Started", callback_data=f"bot_started:{ad_id}")
         ]
-    ])
+    ]
+    return InlineKeyboardMarkup(keyboard)
 
 
 # Command: show first available Message Bot ad
@@ -1508,10 +1513,13 @@ async def handle_bot_started(update: Update, context: ContextTypes.DEFAULT_TYPE,
                 WHERE ad_id = %s AND user_id = %s
             """, (ad_id, user_id))
             if cursor.fetchone():
-                await query.edit_message_text("✅ Already completed!")
+                await query.edit_message_text(
+                    "✅ Already completed!",
+                    reply_markup=None
+                )
                 return
 
-            # Get bot_username from ads.details JSON and cpc from bot_ads_details
+            # Get bot_username and cpc
             cursor.execute("""
                 SELECT 
                     (a.details->>'bot_username') AS bot_username,
@@ -1522,16 +1530,26 @@ async def handle_bot_started(update: Update, context: ContextTypes.DEFAULT_TYPE,
             """, (ad_id,))
             row = cursor.fetchone()
             if not row:
-                await query.edit_message_text("⚠️ Ad not found.")
+                await query.edit_message_text(
+                    "⚠️ Ad not found.",
+                    reply_markup=None
+                )
                 return
 
             promoted_bot_username, cpc = row
             if not promoted_bot_username:
-                await query.edit_message_text("⚠️ Bot username missing for this ad.")
+                await query.edit_message_text(
+                    "⚠️ Bot username missing for this ad.",
+                    reply_markup=None
+                )
                 return
             cpc = float(cpc)
 
-    # Store verification data in user_data for later
+    # Build keyboard so the user can still access the bot
+    bot_link = f"https://t.me/{promoted_bot_username.lstrip('@')}"
+    keyboard = build_bot_keyboard(ad_id, bot_link)
+
+    # Store verification data
     context.user_data["waiting_forward_for_ad"] = {
         "ad_id": ad_id,
         "bot_username": promoted_bot_username,
@@ -1540,8 +1558,10 @@ async def handle_bot_started(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
     await query.edit_message_text(
         f"📩 Please forward the bot's 'You started the bot' message here from @{promoted_bot_username}.\n"
-        "⏳ You have 2 minutes."
+        "⏳ You have 2 minutes.",
+        reply_markup=keyboard
     )
+
 
 
 async def handle_forwarded_verification(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2646,6 +2666,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
