@@ -1343,11 +1343,11 @@ async def bot_cancel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
     return ConversationHandler.END
 
 
-# Helper: get next available Message Bot ad
 def get_next_bot_ad(user_id, exclude_ad_id=None):
     with get_db_connection() as conn:
         with conn.cursor(row_factory=dict_row) as cursor:
-            sql = """
+            # First get the basic ad info
+            cursor.execute("""
                 SELECT 
                     a.id,
                     a.ad_type,
@@ -1368,53 +1368,42 @@ def get_next_bot_ad(user_id, exclude_ad_id=None):
                   AND a.id NOT IN (
                       SELECT ad_id FROM user_skipped_ads WHERE user_id = %s
                   )
-            """
-            params = [user_id, user_id]
-
-            if exclude_ad_id is not None:
-                sql += " AND a.id <> %s"
-                params.append(exclude_ad_id)
-
-            sql += " ORDER BY a.created_at ASC LIMIT 1"
-            cursor.execute(sql, tuple(params))
+                  AND a.id <> COALESCE(%s, -1)
+                ORDER BY a.created_at ASC 
+                LIMIT 1
+            """, (user_id, user_id, exclude_ad_id))
+            
             ad = cursor.fetchone()
+            if not ad:
+                return None
 
-            # Merge JSON details into ad dict for bot_link, bot_username, etc.
-            if ad and ad.get("details"):
-                try:
-                    details = json.loads(ad["details"])
-                    ad.update(details)
-                except Exception:
-                    pass
+            # Now properly extract the bot_link from JSON details
+            try:
+                details = json.loads(ad["details"])
+                ad["bot_link"] = details.get("bot_link", "")
+                ad["bot_username"] = details.get("bot_username", "")
+            except (json.JSONDecodeError, AttributeError) as e:
+                print(f"Error parsing ad details: {e}")
+                ad["bot_link"] = ""
+                ad["bot_username"] = ""
 
             return ad
 
-
-
 def build_bot_ad_text(ad):
-    # Get the raw bot link exactly as stored
-    bot_link = ad.get("bot_link", "")
-    title = ad.get("title", "Start this bot")
+    """Build the ad text while preserving the exact bot link"""
+    # Use get() with defaults to avoid KeyErrors
+    title = ad.get("title", "New Bot")
     description = ad.get("description", "")
-
-    # Validate and clean the link (without modifying the actual URL)
-    display_link = bot_link
-    try:
-        parsed = urllib.parse.urlparse(bot_link)
-        if not parsed.scheme:
-            display_link = f"https://{bot_link}"
-    except:
-        pass  # Keep original if parsing fails
-
-    text_parts = []
-    text_parts.append(f"🤖 <b>{html.escape(title)}</b>\n")
-    if description:
-        text_parts.append(f"{html.escape(description)}\n\n")
+    bot_link = ad.get("bot_link", "")  # This comes from the extracted details
     
-    text_parts.append("<b>Mission:</b> Start and interact with the bot\n\n")
-    text_parts.append("Press <b>STARTED</b> after you've interacted with the bot.")
-
-    return "".join(text_parts), bot_link  # Return original untouched link
+    text_parts = [
+        f"🤖 <b>{html.escape(title)}</b>\n",
+        f"{html.escape(description)}\n\n" if description else "",
+        "<b>Mission:</b> Start and interact with the bot\n\n",
+        "Press <b>STARTED</b> after you've interacted with the bot."
+    ]
+    
+    return "".join(text_parts), bot_link
     
 
 def build_bot_keyboard(ad_id, bot_link):
@@ -2731,6 +2720,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
