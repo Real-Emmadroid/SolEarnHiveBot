@@ -1514,7 +1514,12 @@ async def handle_bot_started(update: Update, context: ContextTypes.DEFAULT_TYPE)
     message_id = query.message.message_id
 
     try:
-        ad_id = int(query.data.split(":")[1])
+        # Extract ad_id from callback data - handle both "bot_started:123" and direct "123" formats
+        callback_data = query.data
+        if ':' in callback_data:
+            ad_id = int(callback_data.split(':', 1)[1])
+        else:
+            ad_id = int(callback_data)
         
         # Get ad details from database
         with get_db_connection() as conn:
@@ -1564,6 +1569,8 @@ async def handle_bot_started(update: Update, context: ContextTypes.DEFAULT_TYPE)
             )
         )
 
+    except (IndexError, ValueError):
+        await query.answer("⚠️ Invalid ad ID format")
     except Exception as e:
         print(f"Error in bot started: {e}")
         await query.answer("⚠️ Error processing request")
@@ -2684,6 +2691,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
