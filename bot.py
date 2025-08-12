@@ -1345,7 +1345,7 @@ async def bot_cancel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 def get_next_bot_ad(user_id, exclude_ad_id=None):
     with get_db_connection() as conn:
-        with conn.cursor(row_family=dict_row) as cursor:
+        with conn.cursor(row_factory=dict_row) as cursor:
             cursor.execute("""
                 SELECT 
                     a.id,
@@ -2731,6 +2731,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
