@@ -366,6 +366,7 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
 
 
 async def unified_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    message = update.message
     text = update.message.text
     user_id = update.effective_user.id
 
@@ -1488,7 +1489,6 @@ async def bot_skip(update: Update, context: ContextTypes.DEFAULT_TYPE, ad_id=Non
 
 
 
-# Handle Started button with forward verification
 async def handle_bot_started(update: Update, context: ContextTypes.DEFAULT_TYPE, ad_id=None):
     query = update.callback_query
     user_id = query.from_user.id
@@ -1530,6 +1530,7 @@ async def handle_bot_started(update: Update, context: ContextTypes.DEFAULT_TYPE,
         "⏳ You have 2 minutes."
     )
 
+
 async def handle_forwarded_verification(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     data = context.user_data.get("waiting_forward_for_ad")
@@ -1537,14 +1538,19 @@ async def handle_forwarded_verification(update: Update, context: ContextTypes.DE
     if not data:
         return  # Not in verification mode
 
-    # Timeout check (optional, you could store timestamp in data and check here)
+    # Get forwarded sender username
+    forwarded_from_username = None
+    if update.message.forward_origin and update.message.forward_origin.type == "user":
+        forwarded_from_username = update.message.forward_origin.sender_user.username
+    elif update.message.forward_from:  # legacy support
+        forwarded_from_username = update.message.forward_from.username
 
-    if not update.message.forward_from:
+    if not forwarded_from_username:
         await update.message.reply_text("❌ Verification failed — No forwarded message detected.")
         context.user_data.pop("waiting_forward_for_ad", None)
         return
 
-    if update.message.forward_from.username.lower() != data["bot_username"].lower():
+    if forwarded_from_username.lower() != data["bot_username"].lower():
         await update.message.reply_text("❌ Verification failed — This is not the correct bot.")
         context.user_data.pop("waiting_forward_for_ad", None)
         return
@@ -2626,6 +2632,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
