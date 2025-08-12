@@ -1506,7 +1506,7 @@ async def bot_skip(update: Update, context: ContextTypes.DEFAULT_TYPE, ad_id=Non
 
 
 
-async def handle_bot_started(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_bot_started(update: Update, context: ContextTypes.DEFAULT_TYPE, ad_id=None):
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
@@ -1514,12 +1514,13 @@ async def handle_bot_started(update: Update, context: ContextTypes.DEFAULT_TYPE)
     message_id = query.message.message_id
 
     try:
-        # Extract ad_id from callback data - handle both "bot_started:123" and direct "123" formats
-        callback_data = query.data
-        if ':' in callback_data:
-            ad_id = int(callback_data.split(':', 1)[1])
-        else:
-            ad_id = int(callback_data)
+        # If ad_id not provided, extract from callback data
+        if ad_id is None:
+            callback_data = query.data
+            if ':' in callback_data:
+                ad_id = int(callback_data.split(':', 1)[1])
+            else:
+                ad_id = int(callback_data)
         
         # Get ad details from database
         with get_db_connection() as conn:
@@ -2691,6 +2692,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
