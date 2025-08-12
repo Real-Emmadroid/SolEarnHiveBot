@@ -1392,29 +1392,39 @@ def get_next_bot_ad(user_id, exclude_ad_id=None):
 
 
 def build_bot_ad_text(ad):
+    # Get the raw bot link exactly as stored
     bot_link = ad.get("bot_link", "")
     title = ad.get("title", "Start this bot")
     description = ad.get("description", "")
+
+    # Validate and clean the link (without modifying the actual URL)
+    display_link = bot_link
+    try:
+        parsed = urllib.parse.urlparse(bot_link)
+        if not parsed.scheme:
+            display_link = f"https://{bot_link}"
+    except:
+        pass  # Keep original if parsing fails
 
     text_parts = []
     text_parts.append(f"🤖 <b>{html.escape(title)}</b>\n")
     if description:
         text_parts.append(f"{html.escape(description)}\n\n")
     
-    # Mission goes below the description
     text_parts.append("<b>Mission:</b> Start and interact with the bot\n\n")
-    text_parts.append("Press <b>STARTED</b> after you’ve interacted with the bot.")
+    text_parts.append("Press <b>STARTED</b> after you've interacted with the bot.")
 
-    return "".join(text_parts), bot_link
-
+    return "".join(text_parts), bot_link  # Return original untouched link
+    
 
 def build_bot_keyboard(ad_id, bot_link):
-    # Ensure bot_link is a full valid URL (just as extra safety)
-    if not bot_link.startswith("http"):
-        bot_link = f"https://t.me/{bot_link.lstrip('@')}"
+    # Preserve the exact original link including all parameters
+    if not bot_link.startswith(('http://', 'https://', 'tg://')):
+        # Only add https if completely missing scheme
+        bot_link = f"https://{bot_link}"
 
     keyboard = [
-        [InlineKeyboardButton("🤖 Open Bot", url=bot_link)],
+        [InlineKeyboardButton("🤖 Open Bot", url=bot_link)],  # Original link used here
         [
             InlineKeyboardButton("⏭ Skip", callback_data=f"bot_skip:{ad_id}"),
             InlineKeyboardButton("✅ Started", callback_data=f"bot_started:{ad_id}")
@@ -1505,6 +1515,9 @@ async def handle_bot_started(update: Update, context: ContextTypes.DEFAULT_TYPE,
     if ad_id is None:
         ad_id = int(query.data.split(":", 1)[1])
 
+    # Get the original stored bot link
+    bot_link = context.user_data.get(f"bot_link_{ad_id}", "")
+    
     with get_db_connection() as conn:
         with conn.cursor() as cursor:
             # Check if already completed
@@ -1519,7 +1532,7 @@ async def handle_bot_started(update: Update, context: ContextTypes.DEFAULT_TYPE,
                 )
                 return
 
-            # Get bot_username and cpc
+            # Get bot details
             cursor.execute("""
                 SELECT 
                     (a.details->>'bot_username') AS bot_username,
@@ -1545,24 +1558,38 @@ async def handle_bot_started(update: Update, context: ContextTypes.DEFAULT_TYPE,
                 return
             cpc = float(cpc)
 
-    # Build keyboard so the user can still access the bot
-    bot_link = f"https://t.me/{promoted_bot_username.lstrip('@')}"
-    keyboard = build_bot_keyboard(ad_id, bot_link)
+    # Delete the original message with buttons
+    try:
+        await context.bot.delete_message(
+            chat_id=query.message.chat_id,
+            message_id=query.message.message_id
+        )
+    except Exception as e:
+        print(f"Error deleting message: {e}")
+
+    # Prepare reply keyboard with Back option
+    reply_keyboard = [["🔙 Back"]]
+    reply_markup = ReplyKeyboardMarkup(
+        reply_keyboard, 
+        resize_keyboard=True,
+        one_time_keyboard=True
+    )
 
     # Store verification data
     context.user_data["waiting_forward_for_ad"] = {
         "ad_id": ad_id,
         "bot_username": promoted_bot_username,
-        "cpc": cpc
+        "cpc": cpc,
+        "bot_link": bot_link  # Store original link
     }
 
-    await query.edit_message_text(
-        f"📩 Please forward the bot's 'You started the bot' message here from @{promoted_bot_username}.\n"
-        "⏳ You have 2 minutes.",
-        reply_markup=keyboard
+    # Send new message requesting forwarded message
+    await context.bot.send_message(
+        chat_id=query.message.chat_id,
+        text=f"📩 Please forward the bot's welcome message from @{promoted_bot_username} to verify.\n\n"
+             "You have 2 minutes to complete this.",
+        reply_markup=reply_markup
     )
-
-
 
 async def handle_forwarded_verification(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -1571,44 +1598,74 @@ async def handle_forwarded_verification(update: Update, context: ContextTypes.DE
     if not data:
         return  # Not in verification mode
 
-    # Get forwarded sender username (works for both Bot API v7+ and legacy)
-    forwarded_from_username = None
-    if getattr(update.message, "forward_origin", None) and getattr(update.message.forward_origin, "type", "") == "user":
-        forwarded_from_username = getattr(update.message.forward_origin.sender_user, "username", None)
-    elif getattr(update.message, "forward_from", None):  # legacy
-        forwarded_from_username = getattr(update.message.forward_from, "username", None)
-
-    if not forwarded_from_username:
-        await update.message.reply_text("❌ Verification failed — No forwarded message detected.")
-        context.user_data.pop("waiting_forward_for_ad", None)
+    # Check if message is forwarded
+    if not hasattr(update.message, "forward_origin") or not update.message.forward_origin:
+        await update.message.reply_text(
+            "❌ Please forward the bot's welcome message, don't type it.",
+            reply_markup=ReplyKeyboardMarkup([["🔙 Back"]], resize_keyboard=True)
+        )
         return
 
-    if forwarded_from_username.lower() != data["bot_username"].lower():
-        await update.message.reply_text("❌ Verification failed — This is not the correct bot.")
-        context.user_data.pop("waiting_forward_for_ad", None)
+    origin = update.message.forward_origin
+    bot_username = data["bot_username"].lstrip('@').lower()
+
+    # Handle different origin types
+    if origin.type == "user":
+        # Message forwarded from a user (should be the bot)
+        if not hasattr(origin, "sender_user") or not origin.sender_user.username:
+            await update.message.reply_text(
+                "❌ Couldn't verify sender. Please forward the bot's welcome message directly.",
+                reply_markup=ReplyKeyboardMarkup([["🔙 Back"]], resize_keyboard=True)
+            )
+            return
+
+        forwarded_username = origin.sender_user.username.lower()
+        if forwarded_username != bot_username:
+            await update.message.reply_text(
+                f"❌ Please forward from @{bot_username}, not @{forwarded_username}.",
+                reply_markup=ReplyKeyboardMarkup([["🔙 Back"]], resize_keyboard=True)
+            )
+            return
+
+    elif origin.type == "hidden_user":
+        await update.message.reply_text(
+            "❌ Cannot verify messages forwarded from private accounts.",
+            reply_markup=ReplyKeyboardMarkup([["🔙 Back"]], resize_keyboard=True)
+        )
+        return
+    else:
+        await update.message.reply_text(
+            "❌ Please forward the bot's welcome message directly from the bot.",
+            reply_markup=ReplyKeyboardMarkup([["🔙 Back"]], resize_keyboard=True)
+        )
         return
 
-    # Passed verification — award reward
+    # Verification successful - process reward
     reward = round(data["cpc"] * 0.8, 6)
     with get_db_connection() as conn:
         with conn.cursor() as cursor:
             cursor.execute("""
                 INSERT INTO bot_ads_clicks (ad_id, user_id)
                 VALUES (%s, %s)
+                ON CONFLICT (ad_id, user_id) DO NOTHING
             """, (data["ad_id"], user_id))
+            
             cursor.execute("""
                 UPDATE bot_ads_details 
                 SET clicks = clicks + 1 
                 WHERE ad_id = %s
             """, (data["ad_id"],))
+            
             cursor.execute("""
                 UPDATE clickbotusers
                 SET payout_balance = payout_balance + %s
                 WHERE id = %s
             """, (Decimal(str(reward)), user_id))
 
-            # Referral bonus
-            cursor.execute("SELECT referral_id FROM clickbotusers WHERE id = %s", (user_id,))
+            # Process referral (15%)
+            cursor.execute("""
+                SELECT referral_id FROM clickbotusers WHERE id = %s
+            """, (user_id,))
             referrer = cursor.fetchone()
             if referrer and referrer[0]:
                 bonus = round(reward * 0.15, 6)
@@ -1620,10 +1677,18 @@ async def handle_forwarded_verification(update: Update, context: ContextTypes.DE
 
             conn.commit()
 
+    # Clear verification state
     context.user_data.pop("waiting_forward_for_ad", None)
-    await update.message.reply_text(f"🎉 You earned {reward:.6f} SOL for starting the bot!")
     
+    # Remove reply keyboard
+    await update.message.reply_text(
+        f"🎉 Verified! You earned {reward:.6f} SOL",
+        reply_markup=ReplyKeyboardRemove()
+    )
 
+    # Show next ad
+    await start(update, context)
+    
 POST_MSG, POST_CPC, POST_BUDGET = range(3)
 
 async def post_views_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2666,6 +2731,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
