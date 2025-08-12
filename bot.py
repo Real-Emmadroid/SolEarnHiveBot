@@ -1353,6 +1353,8 @@ def get_next_bot_ad(user_id, exclude_ad_id=None):
                     a.ad_type,
                     a.details,
                     a.status,
+                    bad.title,
+                    bad.description,
                     bad.clicks,
                     bad.budget,
                     bad.cpc
@@ -1377,7 +1379,7 @@ def get_next_bot_ad(user_id, exclude_ad_id=None):
             cursor.execute(sql, tuple(params))
             ad = cursor.fetchone()
 
-            # Parse JSON details if available
+            # Merge JSON details into ad dict for bot_link, bot_username, etc.
             if ad and ad.get("details"):
                 try:
                     details = json.loads(ad["details"])
@@ -1386,6 +1388,7 @@ def get_next_bot_ad(user_id, exclude_ad_id=None):
                     pass
 
             return ad
+
 
 
 def build_bot_ad_text(ad):
@@ -1406,18 +1409,13 @@ def build_bot_ad_text(ad):
 
 
 def build_bot_keyboard(ad_id, bot_link):
-    buttons = []
-
-    # Only add the Open Bot button if we have a valid URL
-    if bot_link and bot_link.startswith("http"):
-        buttons.append([InlineKeyboardButton("🤖 Open Bot", url=bot_link)])
-
-    buttons.append([
-        InlineKeyboardButton("⏭ Skip", callback_data=f"bot_skip:{ad_id}"),
-        InlineKeyboardButton("✅ Started", callback_data=f"bot_started:{ad_id}")
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🤖 Open Bot", url=bot_link)],
+        [
+            InlineKeyboardButton("⏭ Skip", callback_data=f"bot_skip:{ad_id}"),
+            InlineKeyboardButton("✅ Started", callback_data=f"bot_started:{ad_id}")
+        ]
     ])
-
-    return InlineKeyboardMarkup(buttons)
 
 
 # Command: show first available Message Bot ad
@@ -1506,24 +1504,34 @@ async def handle_bot_started(update: Update, context: ContextTypes.DEFAULT_TYPE,
         with conn.cursor() as cursor:
             # Check if already completed
             cursor.execute("""
-                SELECT 1 FROM bot_ads_clicks WHERE ad_id=%s AND user_id=%s
+                SELECT 1 FROM bot_ads_clicks 
+                WHERE ad_id = %s AND user_id = %s
             """, (ad_id, user_id))
             if cursor.fetchone():
                 await query.edit_message_text("✅ Already completed!")
                 return
 
-            # Get promoted bot username & cpc from DB
+            # Get bot_username from ads.details JSON and cpc from bot_ads_details
             cursor.execute("""
-                SELECT bot_username, cpc FROM bot_ads_details WHERE ad_id=%s
+                SELECT 
+                    (a.details->>'bot_username') AS bot_username,
+                    bad.cpc
+                FROM ads a
+                JOIN bot_ads_details bad ON bad.ad_id = a.id
+                WHERE a.id = %s
             """, (ad_id,))
             row = cursor.fetchone()
             if not row:
                 await query.edit_message_text("⚠️ Ad not found.")
                 return
+
             promoted_bot_username, cpc = row
+            if not promoted_bot_username:
+                await query.edit_message_text("⚠️ Bot username missing for this ad.")
+                return
             cpc = float(cpc)
 
-    # Store verification data in user_data
+    # Store verification data in user_data for later
     context.user_data["waiting_forward_for_ad"] = {
         "ad_id": ad_id,
         "bot_username": promoted_bot_username,
@@ -1543,12 +1551,12 @@ async def handle_forwarded_verification(update: Update, context: ContextTypes.DE
     if not data:
         return  # Not in verification mode
 
-    # Get forwarded sender username
+    # Get forwarded sender username (works for both Bot API v7+ and legacy)
     forwarded_from_username = None
-    if update.message.forward_origin and update.message.forward_origin.type == "user":
-        forwarded_from_username = update.message.forward_origin.sender_user.username
-    elif update.message.forward_from:  # legacy support
-        forwarded_from_username = update.message.forward_from.username
+    if getattr(update.message, "forward_origin", None) and getattr(update.message.forward_origin, "type", "") == "user":
+        forwarded_from_username = getattr(update.message.forward_origin.sender_user, "username", None)
+    elif getattr(update.message, "forward_from", None):  # legacy
+        forwarded_from_username = getattr(update.message.forward_from, "username", None)
 
     if not forwarded_from_username:
         await update.message.reply_text("❌ Verification failed — No forwarded message detected.")
@@ -1561,39 +1569,40 @@ async def handle_forwarded_verification(update: Update, context: ContextTypes.DE
         return
 
     # Passed verification — award reward
+    reward = round(data["cpc"] * 0.8, 6)
     with get_db_connection() as conn:
         with conn.cursor() as cursor:
-            reward = round(data["cpc"] * 0.8, 6)
-
             cursor.execute("""
                 INSERT INTO bot_ads_clicks (ad_id, user_id)
                 VALUES (%s, %s)
             """, (data["ad_id"], user_id))
             cursor.execute("""
-                UPDATE bot_ads_details SET clicks = clicks + 1 WHERE ad_id=%s
+                UPDATE bot_ads_details 
+                SET clicks = clicks + 1 
+                WHERE ad_id = %s
             """, (data["ad_id"],))
             cursor.execute("""
                 UPDATE clickbotusers
                 SET payout_balance = payout_balance + %s
-                WHERE id=%s
+                WHERE id = %s
             """, (Decimal(str(reward)), user_id))
 
             # Referral bonus
-            cursor.execute("SELECT referral_id FROM clickbotusers WHERE id=%s", (user_id,))
+            cursor.execute("SELECT referral_id FROM clickbotusers WHERE id = %s", (user_id,))
             referrer = cursor.fetchone()
             if referrer and referrer[0]:
                 bonus = round(reward * 0.15, 6)
                 cursor.execute("""
                     UPDATE clickbotusers
                     SET payout_balance = payout_balance + %s
-                    WHERE id=%s
+                    WHERE id = %s
                 """, (Decimal(str(bonus)), referrer[0]))
 
             conn.commit()
 
     context.user_data.pop("waiting_forward_for_ad", None)
     await update.message.reply_text(f"🎉 You earned {reward:.6f} SOL for starting the bot!")
-
+    
 
 POST_MSG, POST_CPC, POST_BUDGET = range(3)
 
@@ -2637,6 +2646,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
