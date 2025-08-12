@@ -1345,12 +1345,12 @@ async def bot_cancel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 def get_next_bot_ad(user_id, exclude_ad_id=None):
     with get_db_connection() as conn:
-        with conn.cursor(row_factory=dict_row) as cursor:
+        with conn.cursor(row_family=dict_row) as cursor:
             cursor.execute("""
                 SELECT 
                     a.id,
                     a.ad_type,
-                    a.details,  # This is JSONB (already a dict)
+                    a.details,  -- This column contains the JSON data
                     a.status,
                     bad.title,
                     bad.description,
@@ -1376,23 +1376,40 @@ def get_next_bot_ad(user_id, exclude_ad_id=None):
             if not ad:
                 return None
 
-            # Directly access the details dict (no json.loads needed)
+            # Handle both JSON string and already-parsed dict cases
             details = ad.get("details", {})
+            if isinstance(details, str):
+                try:
+                    details = json.loads(details)
+                except json.JSONDecodeError:
+                    details = {}
+            
             ad["bot_link"] = details.get("bot_link", "")
             ad["bot_username"] = details.get("bot_username", "")
 
             return ad
-
+            
 def build_bot_ad_text(ad):
-    """Build the ad text while preserving the exact bot link"""
-    # Use get() with defaults to avoid KeyErrors
-    title = ad.get("title", "New Bot")
-    description = ad.get("description", "")
-    bot_link = ad.get("bot_link", "")  # This comes from the extracted details
+    """Build bot ad text with proper HTML formatting and link preservation.
     
+    Args:
+        ad: Dictionary containing ad details with keys:
+            - title (str)
+            - description (str)
+            - bot_link (str)
+    
+    Returns:
+        tuple: (formatted_text, original_bot_link)
+    """
+    # Safely extract values with defaults
+    title = html.escape(ad.get("title", "New Bot"))
+    description = html.escape(ad.get("description", ""))
+    bot_link = ad.get("bot_link", "")  # Preserve exactly as-is
+    
+    # Build message parts
     text_parts = [
-        f"🤖 <b>{html.escape(title)}</b>\n",
-        f"{html.escape(description)}\n\n" if description else "",
+        f"🤖 <b>{title}</b>\n",
+        *([f"{description}\n\n"] if description else []),
         "<b>Mission:</b> Start and interact with the bot\n\n",
         "Press <b>STARTED</b> after you've interacted with the bot."
     ]
@@ -2714,6 +2731,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
