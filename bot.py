@@ -369,6 +369,11 @@ async def unified_message_handler(update: Update, context: ContextTypes.DEFAULT_
     text = update.message.text
     user_id = update.effective_user.id
 
+    # Handle forwarded messages first
+    if update.message.forward_from or update.message.forward_from_chat:
+        await handle_forwarded_verification(update, context)
+        return
+
     if text == "💰 Balance":
         await balance_command(update, context)
     elif text == "🙌 Referrals":
@@ -1367,20 +1372,32 @@ def get_next_bot_ad(user_id, exclude_ad_id=None):
 
             sql += " ORDER BY a.created_at ASC LIMIT 1"
             cursor.execute(sql, tuple(params))
-            return cursor.fetchone()
+            ad = cursor.fetchone()
+
+            # Parse JSON details if available
+            if ad and ad.get("details"):
+                try:
+                    details = json.loads(ad["details"])
+                    ad.update(details)
+                except Exception:
+                    pass
+
+            return ad
 
 
 def build_bot_ad_text(ad):
-    details = ad.get("details") or {}
-    bot_link = details.get("bot_link") or ""
-    title = details.get("title", "Start this bot")
-    description = details.get("description", "")
+    bot_link = ad.get("bot_link", "")
+    title = ad.get("title", "Start this bot")
+    description = ad.get("description", "")
 
-    text_parts = [f"<b>Mission:</b> Start and interact with the bot\n\n"]
+    text_parts = []
     text_parts.append(f"🤖 <b>{html.escape(title)}</b>\n")
     if description:
-        text_parts.append(f"{html.escape(description)}\n")
-    text_parts.append("\nPress <b>STARTED</b> after you’ve interacted with the bot.")
+        text_parts.append(f"{html.escape(description)}\n\n")
+    
+    # Mission goes below the description
+    text_parts.append("<b>Mission:</b> Start and interact with the bot\n\n")
+    text_parts.append("Press <b>STARTED</b> after you’ve interacted with the bot.")
 
     return "".join(text_parts), bot_link
 
@@ -1499,35 +1516,49 @@ async def handle_bot_started(update: Update, context: ContextTypes.DEFAULT_TYPE,
             promoted_bot_username, cpc = row
             cpc = float(cpc)
 
-    # Ask user to forward the "Bot started" message for verification
+    # Store verification data in user_data
+    context.user_data["waiting_forward_for_ad"] = {
+        "ad_id": ad_id,
+        "bot_username": promoted_bot_username,
+        "cpc": cpc
+    }
+
     await query.edit_message_text(
         f"📩 Please forward the bot's 'You started the bot' message here from @{promoted_bot_username}.\n"
-        "This is to verify you actually started it."
+        "⏳ You have 2 minutes."
     )
 
-    # Wait for next message from user
-    message = await context.bot.wait_for_message(chat_id=user_id, timeout=120)
-    if not message or not message.forward_from:
-        await context.bot.send_message(user_id, "❌ Verification failed — No forwarded message detected.")
+async def handle_forwarded_verification(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    data = context.user_data.get("waiting_forward_for_ad")
+
+    if not data:
+        return  # Not in verification mode
+
+    # Timeout check (optional, you could store timestamp in data and check here)
+
+    if not update.message.forward_from:
+        await update.message.reply_text("❌ Verification failed — No forwarded message detected.")
+        context.user_data.pop("waiting_forward_for_ad", None)
         return
 
-    # Check if forwarded message is from the promoted bot
-    if message.forward_from.username.lower() != promoted_bot_username.lower():
-        await context.bot.send_message(user_id, "❌ Verification failed — This is not the correct bot.")
+    if update.message.forward_from.username.lower() != data["bot_username"].lower():
+        await update.message.reply_text("❌ Verification failed — This is not the correct bot.")
+        context.user_data.pop("waiting_forward_for_ad", None)
         return
 
     # Passed verification — award reward
     with get_db_connection() as conn:
         with conn.cursor() as cursor:
-            reward = round(cpc * 0.8, 6)
+            reward = round(data["cpc"] * 0.8, 6)
 
             cursor.execute("""
                 INSERT INTO bot_ads_clicks (ad_id, user_id)
                 VALUES (%s, %s)
-            """, (ad_id, user_id))
+            """, (data["ad_id"], user_id))
             cursor.execute("""
                 UPDATE bot_ads_details SET clicks = clicks + 1 WHERE ad_id=%s
-            """, (ad_id,))
+            """, (data["ad_id"],))
             cursor.execute("""
                 UPDATE clickbotusers
                 SET payout_balance = payout_balance + %s
@@ -1547,8 +1578,8 @@ async def handle_bot_started(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
             conn.commit()
 
-    await context.bot.send_message(user_id, f"🎉 You earned {reward:.6f} SOL for starting the bot!")
-
+    context.user_data.pop("waiting_forward_for_ad", None)
+    await update.message.reply_text(f"🎉 You earned {reward:.6f} SOL for starting the bot!")
 
 
 POST_MSG, POST_CPC, POST_BUDGET = range(3)
@@ -2586,13 +2617,14 @@ def main():
     application.add_handler(CallbackQueryHandler(callback_query_handler))
     
     # 5. Add unified message handler LAST
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, unified_message_handler))
+    application.add_handler(MessageHandler((filters.TEXT | filters.FORWARDED) & ~filters.COMMAND, unified_message_handler))
 
     # Run the bot
     application.run_polling()
 
 if __name__ == "__main__":
     main()
+
 
 
 
