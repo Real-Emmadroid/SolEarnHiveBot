@@ -357,6 +357,14 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
             _, ad_id = data.split(":")
             await handle_bot_started(update, context, int(ad_id))
 
+        elif data.startswith("link_skip:"):
+            _, ad_id = data.split(":")
+            await link_skip(update, context, int(ad_id))
+
+        elif data.startswith("link_visited:"):
+            _, ad_id = data.split(":")
+            await link_visited(update, context, int(ad_id))
+
         else:
             await query.answer("Unknown button action.")
 
@@ -392,6 +400,8 @@ async def unified_message_handler(update: Update, context: ContextTypes.DEFAULT_
         await watch_ads(update, context)
     elif text == "🤖 Message Bots":
         await message_bot_ads(update, context)
+    elif text == "🖥 Visit Sites":
+        await message_link_ads(update, context)
     elif text == "➕ New Ad ➕":
         await newad_start(update, context)
     elif text == "➕ Deposit":
@@ -1349,7 +1359,7 @@ def get_next_bot_ad(user_id, exclude_ad_id=None):
                 SELECT 
                     a.id,
                     a.ad_type,
-                    a.details,  -- This column contains the JSON data
+                    a.details,
                     a.status,
                     bad.title,
                     bad.description,
@@ -1648,7 +1658,7 @@ async def handle_forwarded_message(update: Update, context: ContextTypes.DEFAULT
     )
     
     # Show next ad
-    await message_bot_ads(update, context)
+    await start(update, context)
     
 POST_MSG, POST_CPC, POST_BUDGET = range(3)
 
@@ -2427,6 +2437,189 @@ async def link_cancel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     return ConversationHandler.END
 
 
+def get_next_link_ad(user_id, exclude_ad_id=None):
+    """Fetch next available link ad with proper filtering"""
+    with get_db_connection() as conn:
+        with conn.cursor(row_factory=dict_row) as cursor:
+            cursor.execute("""
+                SELECT 
+                    a.id,
+                    a.ad_type,
+                    a.details->>'url' as url,
+                    l.title,
+                    l.description,
+                    l.clicks,
+                    l.budget,
+                    l.cpc
+                FROM ads a
+                JOIN link_ads_details l ON l.ad_id = a.id
+                WHERE a.status = 'active'
+                  AND l.clicks < FLOOR(l.budget / l.cpc)
+                  AND a.id NOT IN (
+                      SELECT ad_id FROM link_ads_clicks WHERE user_id = %s
+                  )
+                  AND a.id NOT IN (
+                      SELECT ad_id FROM user_skipped_ads WHERE user_id = %s
+                  )
+                  AND a.id <> COALESCE(%s, -1)
+                ORDER BY a.created_at ASC
+                LIMIT 1
+            """, (user_id, user_id, exclude_ad_id))
+            return cursor.fetchone()
+
+def build_link_ad_text(ad):
+    """Generate HTML-formatted ad text"""
+    title = html.escape(ad.get("title", "Visit Site"))
+    description = html.escape(ad.get("description", ""))
+    url = ad.get("url", "#")
+    
+    text_parts = [
+        f"🌐 <b>{title}</b>\n",
+        *([f"{description}\n\n"] if description else []),
+        "<b>Mission:</b> Visit the site for at least 10 seconds\n\n",
+        "Press <b>OPEN LINK</b> to proceed."
+    ]
+    
+    return "".join(text_parts), url
+
+def build_link_keyboard(ad_id, url):
+    """Create inline keyboard with verification"""
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("⏭ Skip", callback_data=f"link_skip:{ad_id}"),
+            InlineKeyboardButton("🌐 Open Link", url=url)
+        ],
+        [InlineKeyboardButton("✅ Visited", callback_data=f"link_visited:{ad_id}")]
+    ])
+
+async def message_link_ads(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show available link ads to user"""
+    user_id = update.effective_user.id
+    ad = get_next_link_ad(user_id)
+
+    if not ad:
+        await update.message.reply_text("‼️ No website ads available right now.")
+        return
+
+    ad_id = ad["id"]
+    html_text, url = build_link_ad_text(ad)
+
+    # Store visit start time when showing ad
+    context.user_data[f"link_ad_{ad_id}"] = {
+        "view_start": time.time(),
+        "url": url
+    }
+
+    await update.message.reply_text(
+        html_text,
+        parse_mode="HTML",
+        reply_markup=build_link_keyboard(ad_id, url),
+        disable_web_page_preview=True
+    )
+
+async def link_skip(update: Update, context: ContextTypes.DEFAULT_TYPE, ad_id=None):
+    """Handle ad skipping"""
+    query = update.callback_query
+    user_id = query.from_user.id
+    
+    if ad_id is None:
+        ad_id = int(query.data.split(":", 1)[1])
+
+    # Record skip
+    with get_db_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                UPDATE link_ads_details 
+                SET skipped = skipped + 1 
+                WHERE ad_id = %s
+            """, (ad_id,))
+            
+            cursor.execute("""
+                INSERT INTO user_skipped_ads (user_id, ad_id)
+                VALUES (%s, %s)
+                ON CONFLICT DO NOTHING
+            """, (user_id, ad_id))
+            
+            conn.commit()
+
+    await query.answer("Ad skipped")
+    await message_link_ads(update, context)  # Show next ad
+
+async def link_visited(update: Update, context: ContextTypes.DEFAULT_TYPE, ad_id=None):
+    """Verify visit duration and reward user"""
+    query = update.callback_query
+    user_id = query.from_user.id
+    
+    if ad_id is None:
+        ad_id = int(query.data.split(":", 1)[1])
+
+    # Get visit data
+    visit_data = context.user_data.get(f"link_ad_{ad_id}")
+    if not visit_data:
+        await query.answer("❌ Start by opening the link first", show_alert=True)
+        return
+
+    # Verify duration (10 seconds minimum)
+    visit_duration = time.time() - visit_data["view_start"]
+    if visit_duration < 10:
+        remaining = ceil(10 - visit_duration)
+        await query.answer(
+            f"⚠️ Stay on site for {remaining} more seconds", 
+            show_alert=True
+        )
+        return
+
+    # Get ad details
+    with get_db_connection() as conn:
+        with conn.cursor() as cursor:
+            # Get CPC value
+            cursor.execute("""
+                SELECT cpc FROM link_ads_details 
+                WHERE ad_id = %s
+            """, (ad_id,))
+            cpc = float(cursor.fetchone()[0])
+            
+            # Record completion
+            cursor.execute("""
+                INSERT INTO link_ads_clicks (ad_id, user_id, visit_duration)
+                VALUES (%s, %s, %s)
+                ON CONFLICT DO NOTHING
+            """, (ad_id, user_id, visit_duration))
+            
+            # Update click count
+            cursor.execute("""
+                UPDATE link_ads_details 
+                SET clicks = clicks + 1 
+                WHERE ad_id = %s
+            """, (ad_id,))
+            
+            # Award user (80% of CPC)
+            reward = round(cpc * 0.8, 6)
+            cursor.execute("""
+                UPDATE clickbotusers
+                SET payout_balance = payout_balance + %s
+                WHERE id = %s
+            """, (Decimal(str(reward)), user_id))
+            
+            # Process referral (15%)
+            cursor.execute("SELECT referral_id FROM clickbotusers WHERE id = %s", (user_id,))
+            if referrer := cursor.fetchone():
+                bonus = round(reward * 0.15, 6)
+                cursor.execute("""
+                    UPDATE clickbotusers
+                    SET payout_balance = payout_balance + %s
+                    WHERE id = %s
+                """, (Decimal(str(bonus)), referrer[0]))
+            
+            conn.commit()
+
+    # Cleanup and notify
+    context.user_data.pop(f"link_ad_{ad_id}", None)
+    await query.answer(f"✅ Earned {reward:.6f} SOL", show_alert=True)
+    await message_link_ads(update, context)  # Show next ad
+
+
+
 async def ultstat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != CREATOR_ID:
         return
@@ -2692,6 +2885,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
