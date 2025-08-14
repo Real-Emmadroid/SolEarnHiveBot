@@ -410,7 +410,7 @@ async def unified_message_handler(update: Update, context: ContextTypes.DEFAULT_
         await message_bot_ads(update, context)
     elif text == "🖥 Visit Sites":
         await message_link_ads(update, context)
-    elif text == "🖥 Visit Sites":
+    elif text == "📣 Join Chats":
         await channel_ads(update, context)
     elif text == "➕ New Ad ➕":
         await newad_start(update, context)
@@ -3192,6 +3192,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
