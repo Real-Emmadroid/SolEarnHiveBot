@@ -2595,16 +2595,13 @@ async def link_skip(update: Update, context: ContextTypes.DEFAULT_TYPE, ad_id=No
                 text="⚠️ Error loading next ad"
             )
             
-async def link_visited(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle visited callback with proper arguments"""
+async def link_visited(update: Update, context: ContextTypes.DEFAULT_TYPE, ad_id: int):
     query = update.callback_query
     chat_id = query.message.chat_id
-    message_id = query.message.message_id  # added so reply_to_message_id works
+    message_id = query.message.message_id
+    user_id = query.from_user.id
 
     try:
-        user_id = query.from_user.id
-        ad_id = int(query.data.split(":")[1])
-
         with get_db_connection() as conn:
             with conn.cursor() as cursor:
                 
@@ -2942,6 +2939,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
