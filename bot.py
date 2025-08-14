@@ -2505,7 +2505,7 @@ async def message_link_ads(update: Update, context: ContextTypes.DEFAULT_TYPE):
         })
 
         # Get next ad (excluding skipped ones)
-        ad = get_next_link_ad(user_id, exclude_ids=user_store['skip_flags'])
+        ad = get_next_link_ad(user_id, exclude_ad_id=user_store['skip_flags'])
         if not ad:
             await update.message.reply_text("‼️ No website ads available right now.")
             return
@@ -2946,6 +2946,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
