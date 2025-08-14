@@ -2598,69 +2598,84 @@ async def link_skip(update: Update, context: ContextTypes.DEFAULT_TYPE, ad_id=No
 async def link_visited(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle visited callback with proper arguments"""
     query = update.callback_query
-    await query.answer()  # Required to acknowledge callback
-    
+    chat_id = query.message.chat_id
+    message_id = query.message.message_id  # added so reply_to_message_id works
+
     try:
         user_id = query.from_user.id
         ad_id = int(query.data.split(":")[1])
-        chat_id = query.message.chat_id
-        message_id = query.message.message_id
-        
-        
-        # Process reward
+
         with get_db_connection() as conn:
             with conn.cursor() as cursor:
+                
+                # 1️⃣ Check if user already clicked this ad
+                cursor.execute("""
+                    SELECT 1 FROM link_ads_clicks 
+                    WHERE ad_id = %s AND user_id = %s
+                """, (ad_id, user_id))
+                if cursor.fetchone():
+                    await context.bot.send_message(
+                        chat_id=chat_id,
+                        text="⚠️ You’ve already earned from this ad.",
+                        reply_to_message_id=message_id
+                    )
+                    return  # Stop further processing
+
+                # 2️⃣ Get CPC for this ad
                 cursor.execute("SELECT cpc FROM link_ads_details WHERE ad_id = %s", (ad_id,))
                 cpc = float(cursor.fetchone()[0])
                 reward = round(cpc * 0.8, 6)
-                
+
+                # 3️⃣ Record the click
                 cursor.execute("""
                     INSERT INTO link_ads_clicks (ad_id, user_id)
                     VALUES (%s, %s)
-                    ON CONFLICT DO NOTHING
                 """, (ad_id, user_id))
-                
+
+                # 4️⃣ Update ad click count
                 cursor.execute("""
                     UPDATE link_ads_details 
                     SET clicks = clicks + 1 
                     WHERE ad_id = %s
                 """, (ad_id,))
-                
+
+                # 5️⃣ Add reward to user balance
                 cursor.execute("""
                     UPDATE clickbotusers
                     SET payout_balance = payout_balance + %s
                     WHERE id = %s
                 """, (Decimal(str(reward)), user_id))
-                
-                # Process referral
+
+                # 6️⃣ Process referral bonus
                 cursor.execute("SELECT referral_id FROM clickbotusers WHERE id = %s", (user_id,))
-                if referrer := cursor.fetchone():
+                referrer = cursor.fetchone()
+                if referrer and referrer[0]:
                     bonus = round(reward * 0.15, 6)
                     cursor.execute("""
                         UPDATE clickbotusers
                         SET payout_balance = payout_balance + %s
                         WHERE id = %s
                     """, (Decimal(str(bonus)), referrer[0]))
-                
+
                 conn.commit()
 
-        # Send persistent reward confirmation
-        reward_msg = await context.bot.send_message(
+        # ✅ Send reward message
+        await context.bot.send_message(
             chat_id=chat_id,
-            text=f"🎉 Congratulations! You've earned {reward:.6f} SOL\n\n"
-                 f"Ad ID: {ad_id}",
+            text=f"🎉 Congratulations! You've earned {reward:.6f} SOL\n\nAd ID: {ad_id}",
             reply_to_message_id=message_id
         )
-        
+
         await start(update, context)
 
     except Exception as e:
         print(f"Error in link_visited: {e}")
-        error_msg = await context.bot.send_message(
+        await context.bot.send_message(
             chat_id=chat_id,
             text="⚠️ Failed to process reward. Please try again.",
             reply_to_message_id=message_id
         )
+
             
 async def ultstat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != CREATOR_ID:
@@ -2927,6 +2942,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
