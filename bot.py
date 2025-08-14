@@ -2553,70 +2553,78 @@ async def message_link_ads(update: Update, context: ContextTypes.DEFAULT_TYPE, p
         print(f"Error showing link ads: {e}")
 
 async def process_link_reward(context: ContextTypes.DEFAULT_TYPE):
-    """Automatically process reward after 10 seconds with full error handling"""
+    """Automatically process reward after 10 seconds with complete error protection"""
     try:
-        # Validate job data exists
-        if not hasattr(context, 'job') or not context.job or not context.job.data:
-            print("Error: Missing job data")
+        # 1. Validate context and job existence
+        if not context or not hasattr(context, 'job') or not context.job:
+            print("Error: Invalid context or missing job")
             return
 
-        job = context.job
-        required_fields = ['user_id', 'ad_id', 'chat_id', 'message_id']
+        # 2. Safely access job data with defaults
+        job_data = getattr(context.job, 'data', {}) or {}
         
-        # Check all required fields exist
-        if not all(field in job.data for field in required_fields):
-            print(f"Error: Missing required job data fields. Got: {job.data.keys()}")
-            return
+        # 3. Validate required fields with proper error handling
+        required_fields = {
+            'user_id': int,
+            'ad_id': int,
+            'chat_id': int,
+            'message_id': int
+        }
+        
+        validated_data = {}
+        for field, field_type in required_fields.items():
+            if field not in job_data:
+                print(f"Error: Missing required field {field} in job data")
+                return
+            
+            try:
+                validated_data[field] = field_type(job_data[field])
+            except (TypeError, ValueError):
+                print(f"Error: Invalid type for field {field}")
+                return
 
-        user_id = job.data["user_id"]
-        ad_id = job.data["ad_id"]
-        chat_id = job.data["chat_id"]
-        message_id = job.data["message_id"]
+        user_id = validated_data['user_id']
+        ad_id = validated_data['ad_id']
+        chat_id = validated_data['chat_id']
+        message_id = validated_data['message_id']
 
-        # Validate user_data structure
-        if not hasattr(context, 'user_data'):
+        # 4. Validate user_data structure safely
+        user_data = getattr(context, 'user_data', None)
+        if not user_data:
             print("Error: Missing user_data in context")
             return
 
-        # Check if user skipped or already rewarded
         ad_key = f"link_ad_{ad_id}"
-        if ad_key not in context.user_data:
-            print(f"Ad {ad_id} not found in user_data for user {user_id}")
+        if ad_key not in user_data:
+            print(f"Ad {ad_id} not found in user_data")
             return
 
-        if context.user_data[ad_key].get("reward_processed", False):
-            print(f"Reward already processed for ad {ad_id}, user {user_id}")
-            return
-
-        # Process reward
-        with get_db_connection() as conn:
-            with conn.cursor() as cursor:
-                try:
+        # 5. Process reward with transaction safety
+        try:
+            with get_db_connection() as conn:
+                with conn.cursor() as cursor:
                     # Get CPC value
                     cursor.execute("SELECT cpc FROM link_ads_details WHERE ad_id = %s", (ad_id,))
-                    result = cursor.fetchone()
-                    if not result:
+                    if (result := cursor.fetchone()) is None:
                         print(f"No CPC found for ad {ad_id}")
                         return
-                    cpc = float(result[0])
                     
+                    cpc = float(result[0])
                     reward = round(cpc * 0.8, 6)
                     
-                    # Record completion
+                    # Record transaction
                     cursor.execute("""
                         INSERT INTO link_ads_clicks (ad_id, user_id)
-                        VALUES (%s, %s, %s)
+                        VALUES (%s, %s)
                         ON CONFLICT DO NOTHING
                     """, (ad_id, user_id))
                     
-                    # Update click count
                     cursor.execute("""
                         UPDATE link_ads_details 
                         SET clicks = clicks + 1 
                         WHERE ad_id = %s
                     """, (ad_id,))
                     
-                    # Award user
                     cursor.execute("""
                         UPDATE clickbotusers
                         SET payout_balance = payout_balance + %s
@@ -2625,7 +2633,7 @@ async def process_link_reward(context: ContextTypes.DEFAULT_TYPE):
                     
                     # Process referral
                     cursor.execute("SELECT referral_id FROM clickbotusers WHERE id = %s", (user_id,))
-                    if referrer := cursor.fetchone():
+                    if (referrer := cursor.fetchone()) and referrer[0]:
                         bonus = round(reward * 0.15, 6)
                         cursor.execute("""
                             UPDATE clickbotusers
@@ -2634,27 +2642,30 @@ async def process_link_reward(context: ContextTypes.DEFAULT_TYPE):
                         """, (Decimal(str(bonus)), referrer[0]))
                     
                     conn.commit()
+                    
+                    # Mark as processed
+                    context.user_data[ad_key]["reward_processed"] = True
 
-                except Exception as db_error:
-                    print(f"Database error processing reward: {db_error}")
-                    conn.rollback()
-                    return
+        except Exception as db_error:
+            print(f"Database error: {db_error}")
+            if 'conn' in locals():
+                conn.rollback()
+            return
 
-        # Mark as processed
-        context.user_data[ad_key]["reward_processed"] = True
-
-        # Send reward notification
+        # 6. Send reward notification
         try:
             await context.bot.send_message(
                 chat_id=chat_id,
-                text=f"✅ Congratulations, you earned {reward:.6f} SOL for visiting the link!",
+                text=f"✅ You earned {reward:.6f} SOL!",
                 reply_to_message_id=message_id
             )
         except Exception as msg_error:
-            print(f"Couldn't send reward message: {msg_error}")
+            print(f"Error sending message: {msg_error}")
 
     except Exception as e:
-        print(f"Unexpected error in process_link_reward: {e}")
+        print(f"Unexpected error: {str(e)}")
+        import traceback
+        traceback.print_exc()
 
 async def link_skip(update: Update, context: ContextTypes.DEFAULT_TYPE, ad_id=None):
     """Handle ad skipping with robust job cancellation"""
@@ -2977,6 +2988,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
