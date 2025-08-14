@@ -2518,105 +2518,138 @@ async def message_link_ads(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def link_skip(update: Update, context: ContextTypes.DEFAULT_TYPE, ad_id=None):
-    """Handle ad skipping"""
+    """Handle ad skipping with proper message cleanup"""
     query = update.callback_query
-    user_id = query.from_user.id
-    
-    if ad_id is None:
-        ad_id = int(query.data.split(":", 1)[1])
+    try:
+        user_id = query.from_user.id
+        chat_id = query.message.chat_id
+        message_id = query.message.message_id
+        
+        if ad_id is None:
+            ad_id = int(query.data.split(":", 1)[1])
 
-    # Record skip
-    with get_db_connection() as conn:
-        with conn.cursor() as cursor:
-            cursor.execute("""
-                UPDATE link_ads_details 
-                SET skipped = skipped + 1 
-                WHERE ad_id = %s
-            """, (ad_id,))
-            
-            cursor.execute("""
-                INSERT INTO user_skipped_ads (user_id, ad_id)
-                VALUES (%s, %s)
-                ON CONFLICT DO NOTHING
-            """, (user_id, ad_id))
-            
-            conn.commit()
+        # Record skip in database
+        with get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("""
+                    UPDATE link_ads_details 
+                    SET skipped = skipped + 1 
+                    WHERE ad_id = %s
+                """, (ad_id,))
+                
+                cursor.execute("""
+                    INSERT INTO user_skipped_ads (user_id, ad_id)
+                    VALUES (%s, %s)
+                    ON CONFLICT DO NOTHING
+                """, (user_id, ad_id))
+                
+                conn.commit()
 
-    await query.answer("Ad skipped")
-    await message_link_ads(update, context)  # Show next ad
+        # Delete the old message first
+        try:
+            await context.bot.delete_message(
+                chat_id=chat_id,
+                message_id=message_id
+            )
+        except Exception as e:
+            print(f"Couldn't delete message: {e}")
 
-async def link_visited(update: Update, context: ContextTypes.DEFAULT_TYPE, ad_id=None):
-    """Verify visit duration and reward user"""
+        # Send immediate feedback
+        await query.answer("⏭ Ad skipped")
+
+        # Show fresh new ad
+        await message_link_ads(update, context)
+
+    except Exception as e:
+        print(f"Error in link_skip: {e}")
+        await query.answer("⚠️ Error skipping ad")
+
+async def link_visited(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Verify visit duration and reward user with visible confirmation"""
     query = update.callback_query
-    user_id = query.from_user.id
-    
-    if ad_id is None:
-        ad_id = int(query.data.split(":", 1)[1])
+    try:
+        # Always answer the callback first to prevent client-side timeouts
+        await query.answer()  # Basic acknowledgment
+        
+        user_id = query.from_user.id
+        ad_id = int(query.data.split(":")[1])
+        chat_id = query.message.chat_id
+        message_id = query.message.message_id
 
-    # Get visit data
-    visit_data = context.user_data.get(f"link_ad_{ad_id}")
-    if not visit_data:
-        await query.answer("❌ Start by opening the link first", show_alert=True)
-        return
+        # Get visit data
+        visit_data = context.user_data.get(f"link_ad_{ad_id}")
+        if not visit_data:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="❌ Please start by opening the link first",
+                reply_to_message_id=message_id
+            )
+            return
 
-    # Verify duration (10 seconds minimum)
-    visit_duration = time.time() - visit_data["view_start"]
-    if visit_duration < 10:
-        remaining = ceil(10 - visit_duration)
-        await query.answer(
-            f"⚠️ Stay on site for {remaining} more seconds", 
-            show_alert=True
-        )
-        return
+        # Verify duration
+        visit_duration = time.time() - visit_data["view_start"]
+        if visit_duration < 10:
+            remaining = ceil(10 - visit_duration)
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=f"⚠️ Please stay on site for {remaining} more seconds",
+                reply_to_message_id=message_id
+            )
+            return
 
-    # Get ad details
-    with get_db_connection() as conn:
-        with conn.cursor() as cursor:
-            # Get CPC value
-            cursor.execute("""
-                SELECT cpc FROM link_ads_details 
-                WHERE ad_id = %s
-            """, (ad_id,))
-            cpc = float(cursor.fetchone()[0])
-            
-            # Record completion
-            cursor.execute("""
-                INSERT INTO link_ads_clicks (ad_id, user_id)
-                VALUES (%s, %s)
-                ON CONFLICT DO NOTHING
-            """, (ad_id, user_id))
-            
-            # Update click count
-            cursor.execute("""
-                UPDATE link_ads_details 
-                SET clicks = clicks + 1 
-                WHERE ad_id = %s
-            """, (ad_id,))
-            
-            # Award user (80% of CPC)
-            reward = round(cpc * 0.8, 6)
-            cursor.execute("""
-                UPDATE clickbotusers
-                SET payout_balance = payout_balance + %s
-                WHERE id = %s
-            """, (Decimal(str(reward)), user_id))
-            
-            # Process referral (15%)
-            cursor.execute("SELECT referral_id FROM clickbotusers WHERE id = %s", (user_id,))
-            if referrer := cursor.fetchone():
-                bonus = round(reward * 0.15, 6)
+        # Process reward
+        with get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                # Get CPC value
+                cursor.execute("SELECT cpc FROM link_ads_details WHERE ad_id = %s", (ad_id,))
+                cpc = float(cursor.fetchone()[0])
+                reward = round(cpc * 0.8, 6)
+                
+                # Record transaction
+                cursor.execute("""
+                    INSERT INTO link_ads_clicks (ad_id, user_id)
+                    VALUES (%s, %s)
+                    ON CONFLICT DO NOTHING
+                """, (ad_id, user_id))
+                
+                cursor.execute("""
+                    UPDATE link_ads_details 
+                    SET clicks = clicks + 1 
+                    WHERE ad_id = %s
+                """, (ad_id,))
+                
                 cursor.execute("""
                     UPDATE clickbotusers
                     SET payout_balance = payout_balance + %s
                     WHERE id = %s
-                """, (Decimal(str(bonus)), referrer[0]))
-            
-            conn.commit()
+                """, (Decimal(str(reward)), user_id))
+                
+                # Process referral
+                cursor.execute("SELECT referral_id FROM clickbotusers WHERE id = %s", (user_id,))
+                if referrer := cursor.fetchone():
+                    bonus = round(reward * 0.15, 6)
+                    cursor.execute("""
+                        UPDATE clickbotusers
+                        SET payout_balance = payout_balance + %s
+                        WHERE id = %s
+                    """, (Decimal(str(bonus)), referrer[0]))
+                
+                conn.commit()
 
-    # Cleanup and notify
-    context.user_data.pop(f"link_ad_{ad_id}", None)
-    await query.answer(f"✅ Earned {reward:.6f} SOL", show_alert=True)
-    await message_link_ads(update, context)  # Show next ad
+        # Clean up and send persistent notification
+        context.user_data.pop(f"link_ad_{ad_id}", None)
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=f"✅ Congratulations, You Earned {reward:.6f} SOL for visiting a site",
+            reply_to_message_id=message_id
+        )
+        
+        # Show next ad
+        await start(update, context)
+
+    except Exception as e:
+        print(f"Error in link_visited: {e}")
+        await query.answer("⚠️ An error occurred processing your reward", show_alert=True)
 
 async def ultstat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != CREATOR_ID:
@@ -2883,6 +2916,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
