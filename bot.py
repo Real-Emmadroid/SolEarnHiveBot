@@ -173,7 +173,7 @@ async def send_message(update: Update, text: str, reply_markup=None):
 # Command Handlers
 START_TEXT = """🔥 Welcome to @SolEarnHiveBot 🔥
 
-This bot lets you earn TRX by completing simple tasks:
+This bot lets you earn SOL by completing simple tasks:
 🖥️ Visit sites to earn
 🤖 Message bots to earn
 📣 Join chats to earn
@@ -365,6 +365,14 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
             _, ad_id = data.split(":")
             await link_visited(update, context, int(ad_id))
 
+        elif data.startswith("channel_skip:"):
+            _, ad_id = data.split(":")
+            await link_skip(update, context, int(ad_id))
+
+        elif data.startswith("channel_joined:"):
+            _, ad_id = data.split(":")
+            await channel_joined(update, context, int(ad_id))
+
         else:
             await query.answer("Unknown button action.")
 
@@ -402,6 +410,8 @@ async def unified_message_handler(update: Update, context: ContextTypes.DEFAULT_
         await message_bot_ads(update, context)
     elif text == "🖥 Visit Sites":
         await message_link_ads(update, context)
+    elif text == "🖥 Visit Sites":
+        await channel_ads(update, context)
     elif text == "➕ New Ad ➕":
         await newad_start(update, context)
     elif text == "➕ Deposit":
@@ -873,8 +883,9 @@ async def channel_ad_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
 
     text = (
-        "➡️ Enter the Username or URL of the public channel or group you want to promote:\n"
-        'Please add this bot to the channel administrators first.\n'
+        "➡️ Enter the username (e.g., @channelusername) or invite link (e.g., https://t.me/+abc123) "
+        "of the public or private channel/group you want to promote:\n\n"
+        '⚠️ Please add this bot to the channel administrators first.\n'
         'The bot needs "Invite New Members" rights.\n\n'
         "The bot will start sending members to your channel."
     )
@@ -889,35 +900,47 @@ async def channel_username_handler(update: Update, context: ContextTypes.DEFAULT
         await update.message.reply_text("Cancelled channel ad creation.", reply_markup=ReplyKeyboardRemove())
         return ConversationHandler.END
 
-    username = text
-    if username.startswith("https://t.me/"):
-        username = username.split("https://t.me/")[-1]
-
-    if not username.startswith("@"):
-        username = "@" + username
-
+    # Detect if it's a link or a username
+    channel_input = text
     bot = context.bot
 
     try:
-        chat_member = await bot.get_chat_member(username, bot.id)
-        if chat_member.status not in ["administrator", "creator"]:
+        if channel_input.startswith("https://t.me/"):
+            # Private or public link
+            channel_link = channel_input
+            chat = await bot.get_chat(channel_link)
+        else:
+            # Username form
+            if not channel_input.startswith("@"):
+                channel_input = "@" + channel_input
+            chat = await bot.get_chat(channel_input)
+            channel_link = f"https://t.me/{channel_input.lstrip('@')}"
+
+        # Verify bot admin rights
+        bot_member = await bot.get_chat_member(chat.id, bot.id)
+        if bot_member.status not in ["administrator", "creator"]:
             await update.message.reply_text(
-                "❌ Make the bot ADMIN of your channel, with the rights to add people!\n"
-                "Please try again.",
+                "❌ Make the bot ADMIN of your channel/group with rights to add people!\nPlease try again.",
                 reply_markup=ReplyKeyboardMarkup([["🔙 Back"]], resize_keyboard=True, one_time_keyboard=True),
             )
             return CHANNEL_USERNAME
+
     except Exception as e:
         await update.message.reply_text(
             f"❌ Could not access the channel/group: {e}\n"
-            "Make sure the channel/group username is correct and the bot is added as admin.",
+            "Make sure the link/username is correct and the bot is added as admin.",
             reply_markup=ReplyKeyboardMarkup([["🔙 Back"]], resize_keyboard=True, one_time_keyboard=True),
         )
         return CHANNEL_USERNAME
+        
+    # Store exact details for later
+    context.user_data["channel_username"] = chat.username if chat.username else None
+    context.user_data["channel_link"] = channel_link
+    context.user_data["channel_chat_id"] = chat.id
 
-    context.user_data["channel_username"] = username
     await update.message.reply_text(
-        "Enter a title for your ad:", reply_markup=ReplyKeyboardMarkup([["🔙 Back"]], resize_keyboard=True, one_time_keyboard=True)
+        "Enter a title for your ad:",
+        reply_markup=ReplyKeyboardMarkup([["🔙 Back"]], resize_keyboard=True, one_time_keyboard=True)
     )
     return CHANNEL_TITLE
 
@@ -1027,9 +1050,13 @@ async def channel_budget_handler(update: Update, context: ContextTypes.DEFAULT_T
 
     context.user_data["channel_budget"] = budget
 
-    # Save ad to DB
+    ad_data = {
+        "channel_username": context.user_data["channel_username"],
+        "channel_link": context.user_data["channel_link"],
+        "chat_id": context.user_data["channel_chat_id"],  # store for private verification
+    }
+
     user_id = update.effective_user.id
-    ad_data = {"channel_link": context.user_data["channel_username"]}
 
     with get_db_connection() as conn:
         with conn.cursor() as cursor:
@@ -1039,7 +1066,7 @@ async def channel_budget_handler(update: Update, context: ContextTypes.DEFAULT_T
                 VALUES (%s, %s, %s, %s, now(), now() + interval '30 days')
                 RETURNING id
                 """,
-                (user_id, "channel_or_group", json.dumps(ad_data), "running"),
+                (user_id, "channel_or_group", json.dumps(ad_data), "active"),
             )
             ad_id = cursor.fetchone()[0]
 
@@ -1101,6 +1128,243 @@ async def cancel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Return to main menu
     await start(update, context)
     return ConversationHandler.END
+
+def get_next_channel_ad(user_id, exclude_ad_id=None):
+    with get_db_connection() as conn:
+        with conn.cursor(row_factory=dict_row) as cursor:
+            cursor.execute("""
+                SELECT 
+                    a.id,
+                    a.ad_type,
+                    a.details,
+                    cad.title,
+                    cad.description,
+                    cad.clicks,
+                    cad.budget,
+                    cad.cpc
+                FROM ads a
+                JOIN channel_ads_details cad ON cad.ad_id = a.id
+                WHERE a.status = 'active'
+                  AND cad.clicks < FLOOR(cad.budget / cad.cpc)
+                  AND a.id NOT IN (
+                      SELECT ad_id FROM channel_ads_clicks WHERE user_id = %s
+                  )
+                  AND a.id NOT IN (
+                      SELECT ad_id FROM user_skipped_ads WHERE user_id = %s
+                  )
+                  AND a.id <> COALESCE(%s, -1)
+                ORDER BY a.created_at ASC 
+                LIMIT 1
+            """, (user_id, user_id, exclude_ad_id))
+
+            ad = cursor.fetchone()
+            if not ad:
+                return None
+
+            # Parse details JSON
+            details = ad.get("details", {})
+            if isinstance(details, str):
+                try:
+                    details = json.loads(details)
+                except json.JSONDecodeError:
+                    details = {}
+            
+            ad["channel_link"] = details.get("channel_link", "")
+            ad["channel_username"] = details.get("channel_username", "")
+
+            return ad
+
+def build_channel_ad_text(ad):
+    title = html.escape(ad.get("title", "New Channel/Group"))
+    description = html.escape(ad.get("description", ""))
+    text_parts = [
+        f"📣 <b>{title}</b>\n",
+        *([f"{description}\n\n"] if description else []),
+        "<b>Mission:</b> Join the channel/group\n\n",
+        "Press <b>JOINED</b> after you have joined."
+    ]
+    return "".join(text_parts), ad.get("channel_link", "")
+
+
+def build_channel_keyboard(ad_id, channel_link):
+    if not channel_link.startswith(('http://', 'https://', 'tg://')):
+        channel_link = f"https://{channel_link}"
+    
+    keyboard = [
+        [InlineKeyboardButton("📣 Join the Channel", url=channel_link)],
+        [
+            InlineKeyboardButton("⏭ Skip", callback_data=f"channel_skip:{ad_id}"),
+            InlineKeyboardButton("✅ Joined", callback_data=f"channel_joined:{ad_id}")
+        ]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+async def channel_ads(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    ad = get_next_channel_ad(user_id)
+
+    if not ad:
+        await update.message.reply_text("‼️ No Join Chat ads available right now.")
+        return
+
+    ad_id = ad["id"]
+    html_text, channel_link = build_channel_ad_text(ad)
+
+    await update.message.reply_text(
+        html_text,
+        parse_mode="HTML",
+        disable_web_page_preview=True,
+        reply_markup=build_channel_keyboard(ad_id, channel_link)
+    )
+
+async def channel_skip(update: Update, context: ContextTypes.DEFAULT_TYPE, ad_id=None):
+    query = update.callback_query
+    user_id = query.from_user.id
+    chat_id = query.message.chat_id
+    message_id = query.message.message_id
+
+    await query.answer("⏭ Ad skipped")
+
+    if ad_id is None:
+        ad_id = int(query.data.split(":", 1)[1])
+
+    with get_db_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                INSERT INTO user_skipped_ads (user_id, ad_id)
+                VALUES (%s, %s)
+                ON CONFLICT (user_id, ad_id) DO NOTHING
+            """, (user_id, ad_id))
+            conn.commit()
+
+    # Delete old message
+    try:
+        await context.bot.delete_message(chat_id, message_id)
+    except:
+        pass
+
+    next_ad = get_next_channel_ad(user_id, exclude_ad_id=ad_id)
+    if not next_ad:
+        await context.bot.send_message(chat_id, "‼️ No more ads available.")
+        return
+
+    next_ad_id = next_ad["id"]
+    html_text, channel_link = build_channel_ad_text(next_ad)
+    await context.bot.send_message(
+        chat_id,
+        html_text,
+        parse_mode="HTML",
+        disable_web_page_preview=True,
+        reply_markup=build_channel_keyboard(next_ad_id, channel_link)
+    )
+
+async def channel_joined(update: Update, context: ContextTypes.DEFAULT_TYPE, ad_id=None):
+    query = update.callback_query
+    user_id = query.from_user.id
+    chat_id = query.message.chat_id
+    message_id = query.message.message_id
+
+    await query.answer()  # no alert popups
+
+    if ad_id is None:
+        ad_id = int(query.data.split(":", 1)[1])
+
+    with get_db_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                SELECT details, cad.cpc
+                FROM ads a
+                JOIN channel_ads_details cad ON cad.ad_id = a.id
+                WHERE a.id = %s
+            """, (ad_id,))
+            row = cursor.fetchone()
+
+    if not row:
+        await context.bot.edit_message_text(
+            "❌ Ad not found",
+            chat_id=chat_id,
+            message_id=message_id
+        )
+        return
+
+    details = json.loads(row[0]) if isinstance(row[0], str) else row[0]
+    cpc = float(row[1])
+
+    channel_username = details.get("channel_username", "").lstrip("@")
+    private_chat_id = details.get("chat_id")
+
+    target_id = f"@{channel_username}" if channel_username else private_chat_id
+
+    if not target_id:
+        await context.bot.edit_message_text(
+            "⚠️ Channel information is missing.",
+            chat_id=chat_id,
+            message_id=message_id
+        )
+        return
+
+    try:
+        member = await context.bot.get_chat_member(target_id, user_id)
+        if member.status not in ["member", "administrator", "creator"]:
+            await context.bot.edit_message_text(
+                "❌ You must join the channel before claiming the reward.",
+                chat_id=chat_id,
+                message_id=message_id
+            )
+            return
+    except Exception as e:
+        await context.bot.edit_message_text(
+            "⚠️ Could not verify your membership. Please try again later.",
+            chat_id=chat_id,
+            message_id=message_id
+        )
+        print(e)
+        return
+
+    with get_db_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                SELECT 1 FROM channel_ads_clicks
+                WHERE ad_id = %s AND user_id = %s
+            """, (ad_id, user_id))
+            if cursor.fetchone():
+                await context.bot.edit_message_text(
+                    "⚠️ You have already been rewarded for this ad.",
+                    chat_id=chat_id,
+                    message_id=message_id
+                )
+                return
+
+    reward = round(cpc * 0.8, 6)
+    with get_db_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                INSERT INTO channel_ads_clicks (ad_id, user_id)
+                VALUES (%s, %s)
+            """, (ad_id, user_id))
+            cursor.execute("""
+                UPDATE channel_ads_details
+                SET clicks = clicks + 1
+                WHERE ad_id = %s
+            """, (ad_id,))
+            cursor.execute("""
+                UPDATE clickbotusers
+                SET payout_balance = payout_balance + %s
+                WHERE id = %s
+            """, (Decimal(str(reward)), user_id))
+            conn.commit()
+
+    # Replace ad message with confirmation
+    await context.bot.edit_message_text(
+        f"✅ Verified! You earned <b>{reward:.6f} SOL</b>",
+        chat_id=chat_id,
+        message_id=message_id,
+        parse_mode="HTML"
+    )
+
+    # Show next ad
+    await start(update, context)
+
 
 
 BOT_FORWARD_MSG, BOT_PROMO_LINK, BOT_TITLE, BOT_DESCRIPTION, BOT_CPC, BOT_BUDGET = range(6)
@@ -2928,6 +3192,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
