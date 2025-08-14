@@ -2492,8 +2492,12 @@ def build_link_keyboard(ad_id, url):
     ])
 
 async def message_link_ads(update: Update, context: ContextTypes.DEFAULT_TYPE, previous_message=None):
-    """Show link ads with automatic reward timing"""
+    """Show link ads with automatic reward timing and proper context initialization"""
     try:
+        # Initialize user_data if not exists
+        if not hasattr(context, 'user_data'):
+            context.user_data = {}
+        
         # Delete previous message if exists
         if previous_message:
             try:
@@ -2517,12 +2521,16 @@ async def message_link_ads(update: Update, context: ContextTypes.DEFAULT_TYPE, p
         ad_id = ad["id"]
         html_text, url = build_link_ad_text(ad)
 
+        # Initialize ad data structure if not exists
+        if f"link_ad_{ad_id}" not in context.user_data:
+            context.user_data[f"link_ad_{ad_id}"] = {}
+
         # Store ad data with cooldown start
-        context.user_data[f"link_ad_{ad_id}"] = {
+        context.user_data[f"link_ad_{ad_id}"].update({
             "url": url,
             "message": None,
             "reward_processed": False
-        }
+        })
 
         # Send new message
         new_message = await context.bot.send_message(
@@ -2534,78 +2542,84 @@ async def message_link_ads(update: Update, context: ContextTypes.DEFAULT_TYPE, p
         )
 
         # Store message reference
-        context.user_data[f"link_ad_{ad_id}"]["message"] = new_message
+        context.user_data[f"link_ad_{ad_id}"]["message"] = {
+            "chat_id": new_message.chat_id,
+            "message_id": new_message.message_id
+        }
 
         # Schedule reward check after 10 seconds
-        context.job_queue.run_once(
-            callback=process_link_reward,
-            when=10,
-            data={
-                "chat_id": new_message.chat_id,
-                "user_id": user_id,
-                "ad_id": ad_id,
-                "message_id": new_message.message_id
-            },
-            name=f"link_reward_{user_id}_{ad_id}"
-        )
+        if hasattr(context, 'job_queue') and context.job_queue:
+            context.job_queue.run_once(
+                callback=process_link_reward,
+                when=10,
+                data={
+                    "chat_id": new_message.chat_id,
+                    "user_id": user_id,
+                    "ad_id": ad_id,
+                    "message_id": new_message.message_id
+                },
+                name=f"link_reward_{user_id}_{ad_id}"
+            )
+        else:
+            print("Warning: Job queue not available")
 
     except Exception as e:
         print(f"Error showing link ads: {e}")
+        import traceback
+        traceback.print_exc()
 
 async def process_link_reward(context: ContextTypes.DEFAULT_TYPE):
-    """Automatically process reward after 10 seconds with complete error protection"""
+    """Reward processing with robust context handling"""
     try:
-        # 1. Validate context and job existence
-        if not context or not hasattr(context, 'job') or not context.job:
-            print("Error: Invalid context or missing job")
+        # 1. Validate context structure
+        if not context:
+            print("Error: Context is None")
             return
-
-        # 2. Safely access job data with defaults
-        job_data = getattr(context.job, 'data', {}) or {}
-        
-        # 3. Validate required fields with proper error handling
-        required_fields = {
-            'user_id': int,
-            'ad_id': int,
-            'chat_id': int,
-            'message_id': int
-        }
-        
-        validated_data = {}
-        for field, field_type in required_fields.items():
-            if field not in job_data:
-                print(f"Error: Missing required field {field} in job data")
-                return
             
-            try:
-                validated_data[field] = field_type(job_data[field])
-            except (TypeError, ValueError):
-                print(f"Error: Invalid type for field {field}")
-                return
+        # Initialize user_data if not exists
+        if not hasattr(context, 'user_data'):
+            context.user_data = {}
 
-        user_id = validated_data['user_id']
-        ad_id = validated_data['ad_id']
-        chat_id = validated_data['chat_id']
-        message_id = validated_data['message_id']
-
-        # 4. Validate user_data structure safely
-        user_data = getattr(context, 'user_data', None)
-        if not user_data:
-            print("Error: Missing user_data in context")
+        # 2. Validate job and data
+        if not hasattr(context, 'job') or not context.job:
+            print("Error: Missing job in context")
             return
 
+        job_data = getattr(context.job, 'data', {})
+        if not job_data:
+            print("Error: Missing job data")
+            return
+
+        # 3. Validate required fields
+        required_fields = ['user_id', 'ad_id', 'chat_id', 'message_id']
+        if not all(field in job_data for field in required_fields):
+            print(f"Error: Missing required fields in job data")
+            return
+
+        user_id = job_data['user_id']
+        ad_id = job_data['ad_id']
+        chat_id = job_data['chat_id']
+        message_id = job_data['message_id']
         ad_key = f"link_ad_{ad_id}"
-        if ad_key not in user_data:
-            print(f"Ad {ad_id} not found in user_data")
+
+        # 4. Validate ad data exists
+        if ad_key not in context.user_data:
+            print(f"Error: Ad data missing for {ad_key}")
             return
 
-        # 5. Process reward with transaction safety
-        try:
-            with get_db_connection() as conn:
-                with conn.cursor() as cursor:
+        # 5. Check if already processed
+        if context.user_data[ad_key].get("reward_processed", False):
+            print(f"Reward already processed for ad {ad_id}")
+            return
+
+        # 6. Process reward
+        with get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                try:
                     # Get CPC value
                     cursor.execute("SELECT cpc FROM link_ads_details WHERE ad_id = %s", (ad_id,))
-                    if (result := cursor.fetchone()) is None:
+                    result = cursor.fetchone()
+                    if not result:
                         print(f"No CPC found for ad {ad_id}")
                         return
                     
@@ -2646,24 +2660,23 @@ async def process_link_reward(context: ContextTypes.DEFAULT_TYPE):
                     # Mark as processed
                     context.user_data[ad_key]["reward_processed"] = True
 
-        except Exception as db_error:
-            print(f"Database error: {db_error}")
-            if 'conn' in locals():
-                conn.rollback()
-            return
+                except Exception as db_error:
+                    print(f"Database error: {db_error}")
+                    conn.rollback()
+                    return
 
-        # 6. Send reward notification
+        # 7. Send notification
         try:
             await context.bot.send_message(
                 chat_id=chat_id,
-                text=f"✅ You earned {reward:.6f} SOL!",
+                text=f"✅ You earned {reward:.6f} SOL automatically!",
                 reply_to_message_id=message_id
             )
         except Exception as msg_error:
             print(f"Error sending message: {msg_error}")
 
     except Exception as e:
-        print(f"Unexpected error: {str(e)}")
+        print(f"Unexpected error in reward processing: {str(e)}")
         import traceback
         traceback.print_exc()
 
@@ -2988,6 +3001,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
