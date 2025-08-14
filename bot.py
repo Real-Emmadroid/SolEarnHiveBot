@@ -2554,11 +2554,10 @@ async def link_skip(update: Update, context: ContextTypes.DEFAULT_TYPE, ad_id=No
         except Exception as e:
             print(f"Couldn't delete message: {e}")
 
-        # Send immediate feedback
-        feedback_msg = await context.bot.send_message(
+        # Show new ad without reply-to
+        await context.bot.send_message(
             chat_id=chat_id,
-            text="⏭ Ad skipped - loading next ad...",
-            reply_to_message_id=message_id
+            text="Loading next ad..."
         )
 
         # Show fresh new ad
@@ -2568,18 +2567,16 @@ async def link_skip(update: Update, context: ContextTypes.DEFAULT_TYPE, ad_id=No
         print(f"Error in link_skip: {e}")
 
 async def link_visited(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Verify visit duration and reward user with persistent messages"""
+    """Handle visited callback with proper arguments"""
     query = update.callback_query
-    chat_id = query.message.chat_id
-    message_id = query.message.message_id
+    await query.answer()  # Required to acknowledge callback
     
     try:
-        # Required callback answer to prevent loading indicators
-        await query.answer()
-        
         user_id = query.from_user.id
         ad_id = int(query.data.split(":")[1])
-
+        chat_id = query.message.chat_id
+        message_id = query.message.message_id
+        
         # Get visit data
         visit_data = context.user_data.get(f"link_ad_{ad_id}")
         if not visit_data:
@@ -2943,6 +2940,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
