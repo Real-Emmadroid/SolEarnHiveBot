@@ -1187,9 +1187,17 @@ def build_channel_ad_text(ad):
 
 
 def build_channel_keyboard(ad_id, channel_link):
-    if not channel_link.startswith(('http://', 'https://', 'tg://')):
-        channel_link = f"https://{channel_link}"
+    # Clean and normalize
+    channel_link = channel_link.strip()
+
+    # If it's an @username format
+    if channel_link.startswith('@'):
+        channel_link = f"https://t.me/{channel_link.lstrip('@')}"
     
+    # If it’s only the username without @
+    elif not channel_link.startswith(('http://', 'https://', 'tg://')):
+        channel_link = f"https://t.me/{channel_link}"
+
     keyboard = [
         [InlineKeyboardButton("📣 Join the Channel", url=channel_link)],
         [
@@ -1198,6 +1206,7 @@ def build_channel_keyboard(ad_id, channel_link):
         ]
     ]
     return InlineKeyboardMarkup(keyboard)
+
 
 async def channel_ads(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -3192,6 +3201,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
