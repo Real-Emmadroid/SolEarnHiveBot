@@ -2441,20 +2441,7 @@ def get_next_link_ad(user_id, exclude_ad_id=None):
     """Fetch next available link ad with proper filtering"""
     with get_db_connection() as conn:
         with conn.cursor(row_factory=dict_row) as cursor:
-            # Handle both single ID and collection of IDs
-            exclude_condition = ""
-            params = [user_id, user_id]
-            
-            if exclude_ad_id:
-                if isinstance(exclude_ad_id, (set, list, tuple)):
-                    if exclude_ad_id:  # Only add condition if set is not empty
-                        exclude_condition = "AND a.id NOT IN %s"
-                        params.append(tuple(exclude_ad_id))
-                else:
-                    exclude_condition = "AND a.id <> %s"
-                    params.append(exclude_ad_id)
-            
-            cursor.execute(f"""
+            cursor.execute("""
                 SELECT 
                     a.id,
                     a.ad_type,
@@ -2474,10 +2461,10 @@ def get_next_link_ad(user_id, exclude_ad_id=None):
                   AND a.id NOT IN (
                       SELECT ad_id FROM user_skipped_ads WHERE user_id = %s
                   )
-                  {exclude_condition}
+                  AND a.id <> COALESCE(%s, -1)
                 ORDER BY a.created_at ASC
                 LIMIT 1
-            """, params)
+            """, (user_id, user_id, exclude_ad_id))
             return cursor.fetchone()
 
 def build_link_ad_text(ad):
@@ -2496,203 +2483,140 @@ def build_link_ad_text(ad):
     return "".join(text_parts), url
 
 def build_link_keyboard(ad_id, url):
-    """Simplified keyboard with just Skip and Open Link"""
+    """Create inline keyboard with verification"""
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton("⏭ Skip", callback_data=f"link_skip:{ad_id}"),
             InlineKeyboardButton("🌐 Open Link", url=url)
-        ]
+        ],
+        [InlineKeyboardButton("✅ Visited", callback_data=f"link_visited:{ad_id}")]
     ])
 
-
 async def message_link_ads(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show link ads with proper skip handling"""
-    try:
-        user_id = update.effective_user.id
-        chat_id = update.effective_chat.id
-        
-        # Initialize per-user storage
-        user_store = context.user_data.setdefault(user_id, {
-            'active_ads': {},
-            'skipped_ads': set()  # Changed to match parameter name
-        })
+    """Show available link ads to user"""
+    user_id = update.effective_user.id
+    ad = get_next_link_ad(user_id)
 
-        # Get next ad (excluding skipped ones)
-        skipped_ids = user_store['skipped_ads']
-        ad = get_next_link_ad(
-            user_id, 
-            exclude_ad_id=tuple(skipped_ids) if skipped_ids else None
+    if not ad:
+        await update.message.reply_text("‼️ No website ads available right now.")
+        return
+
+    ad_id = ad["id"]
+    html_text, url = build_link_ad_text(ad)
+
+    # Store visit start time when showing ad
+    context.user_data[f"link_ad_{ad_id}"] = {
+        "view_start": time.time(),
+        "url": url
+    }
+
+    await update.message.reply_text(
+        html_text,
+        parse_mode="HTML",
+        reply_markup=build_link_keyboard(ad_id, url),
+        disable_web_page_preview=True
+    )
+
+async def link_skip(update: Update, context: ContextTypes.DEFAULT_TYPE, ad_id=None):
+    """Handle ad skipping"""
+    query = update.callback_query
+    user_id = query.from_user.id
+    
+    if ad_id is None:
+        ad_id = int(query.data.split(":", 1)[1])
+
+    # Record skip
+    with get_db_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                UPDATE link_ads_details 
+                SET skipped = skipped + 1 
+                WHERE ad_id = %s
+            """, (ad_id,))
+            
+            cursor.execute("""
+                INSERT INTO user_skipped_ads (user_id, ad_id)
+                VALUES (%s, %s)
+                ON CONFLICT DO NOTHING
+            """, (user_id, ad_id))
+            
+            conn.commit()
+
+    await query.answer("Ad skipped")
+    await message_link_ads(update, context)  # Show next ad
+
+async def link_visited(update: Update, context: ContextTypes.DEFAULT_TYPE, ad_id=None):
+    """Verify visit duration and reward user"""
+    query = update.callback_query
+    user_id = query.from_user.id
+    
+    if ad_id is None:
+        ad_id = int(query.data.split(":", 1)[1])
+
+    # Get visit data
+    visit_data = context.user_data.get(f"link_ad_{ad_id}")
+    if not visit_data:
+        await query.answer("❌ Start by opening the link first", show_alert=True)
+        return
+
+    # Verify duration (10 seconds minimum)
+    visit_duration = time.time() - visit_data["view_start"]
+    if visit_duration < 10:
+        remaining = ceil(10 - visit_duration)
+        await query.answer(
+            f"⚠️ Stay on site for {remaining} more seconds", 
+            show_alert=True
         )
-        
-        if not ad:
-            await update.message.reply_text("‼️ No website ads available right now.")
-            return
+        return
 
-        ad_id = ad["id"]
-        html_text, url = build_link_ad_text(ad)
-
-        # Store ad state
-        ad_key = f"ad_{ad_id}"
-        user_store['active_ads'][ad_key] = {
-            "url": url,
-            "chat_id": chat_id,
-            "message_id": None,
-            "reward_processed": False,
-            "skip_requested": False
-        }
-
-        # Send the ad message
-        message = await update.message.reply_text(
-            html_text,
-            parse_mode="HTML",
-            reply_markup=build_link_keyboard(ad_id, url),
-            disable_web_page_preview=True
-        )
-
-        # Update message reference
-        user_store['active_ads'][ad_key]['message_id'] = message.message_id
-
-        # Schedule reward processing
-        if hasattr(context, 'job_queue'):
-            context.job_queue.run_once(
-                callback=process_link_reward,
-                when=10,
-                data={
-                    'user_id': user_id,
-                    'ad_id': ad_id,
-                    'chat_id': chat_id,
-                    'message_id': message.message_id
-                },
-                name=f"link_reward_{user_id}_{ad_id}"
-            )
-
-    except Exception as e:
-        print(f"Error in message_link_ads: {e}")
-        import traceback
-        traceback.print_exc()
-
-async def process_link_reward(context: ContextTypes.DEFAULT_TYPE):
-    """Process rewards with skip protection and per-user storage"""
-    try:
-        job = context.job
-        if not job or not job.data:
-            return
-
-        user_id = job.data['user_id']
-        ad_id = job.data['ad_id']
-        chat_id = job.data['chat_id']
-        message_id = job.data['message_id']
-        ad_key = f"ad_{ad_id}"
-
-        # Get user store
-        user_store = context.user_data.get(user_id, {})
-        if not user_store or 'active_ads' not in user_store:
-            return
-
-        ad_data = user_store['active_ads'].get(ad_key)
-        if not ad_data:
-            return
-
-        # Check if skipped or already processed
-        if ad_data.get('skip_requested', False) or ad_data.get('reward_processed', False):
-            return
-
-        # Process reward
-        with get_db_connection() as conn:
-            with conn.cursor() as cursor:
-                # Get CPC value
-                cursor.execute("SELECT cpc FROM link_ads_details WHERE ad_id = %s", (ad_id,))
-                result = cursor.fetchone()
-                if not result:
-                    return
-                
-                cpc = float(result[0])
-                reward = round(cpc * 0.8, 6)
-                
-                # Record transaction
-                cursor.execute("""
-                    INSERT INTO link_ads_clicks (ad_id, user_id)
-                    VALUES (%s, %s)
-                    ON CONFLICT DO NOTHING
-                """, (ad_id, user_id))
-                
-                cursor.execute("""
-                    UPDATE link_ads_details 
-                    SET clicks = clicks + 1 
-                    WHERE ad_id = %s
-                """, (ad_id,))
-                
+    # Get ad details
+    with get_db_connection() as conn:
+        with conn.cursor() as cursor:
+            # Get CPC value
+            cursor.execute("""
+                SELECT cpc FROM link_ads_details 
+                WHERE ad_id = %s
+            """, (ad_id,))
+            cpc = float(cursor.fetchone()[0])
+            
+            # Record completion
+            cursor.execute("""
+                INSERT INTO link_ads_clicks (ad_id, user_id)
+                VALUES (%s, %s)
+                ON CONFLICT DO NOTHING
+            """, (ad_id, user_id))
+            
+            # Update click count
+            cursor.execute("""
+                UPDATE link_ads_details 
+                SET clicks = clicks + 1 
+                WHERE ad_id = %s
+            """, (ad_id,))
+            
+            # Award user (80% of CPC)
+            reward = round(cpc * 0.8, 6)
+            cursor.execute("""
+                UPDATE clickbotusers
+                SET payout_balance = payout_balance + %s
+                WHERE id = %s
+            """, (Decimal(str(reward)), user_id))
+            
+            # Process referral (15%)
+            cursor.execute("SELECT referral_id FROM clickbotusers WHERE id = %s", (user_id,))
+            if referrer := cursor.fetchone():
+                bonus = round(reward * 0.15, 6)
                 cursor.execute("""
                     UPDATE clickbotusers
                     SET payout_balance = payout_balance + %s
                     WHERE id = %s
-                """, (Decimal(str(reward)), user_id))
-                
-                # Process referral
-                cursor.execute("SELECT referral_id FROM clickbotusers WHERE id = %s", (user_id,))
-                if (referrer := cursor.fetchone()) and referrer[0]:
-                    bonus = round(reward * 0.15, 6)
-                    cursor.execute("""
-                        UPDATE clickbotusers
-                        SET payout_balance = payout_balance + %s
-                        WHERE id = %s
-                    """, (Decimal(str(bonus)), referrer[0]))
-                
-                conn.commit()
+                """, (Decimal(str(bonus)), referrer[0]))
+            
+            conn.commit()
 
-        # Mark as processed
-        user_store['active_ads'][ad_key]['reward_processed'] = True
-
-        # Send notification
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text=f"✅ You earned {reward:.6f} SOL automatically!",
-            reply_to_message_id=message_id
-        )
-
-    except Exception as e:
-        print(f"Error in process_link_reward: {e}")
-        import traceback
-        traceback.print_exc()
-
-async def link_skip(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle ad skipping with proper cleanup"""
-    try:
-        query = update.callback_query
-        await query.answer()
-        
-        user_id = query.from_user.id
-        ad_id = int(query.data.split(":")[1])
-        ad_key = f"ad_{ad_id}"
-
-        # Get user store
-        user_store = context.user_data.get(user_id, {})
-        if not user_store:
-            return
-
-        # Mark as skipped
-        if 'active_ads' in user_store and ad_key in user_store['active_ads']:
-            user_store['active_ads'][ad_key]['skip_requested'] = True
-        
-        # Add to skip history (using correct key)
-        user_store.setdefault('skipped_ads', set()).add(ad_id)
-
-        # Delete old message
-        try:
-            await context.bot.delete_message(
-                chat_id=query.message.chat_id,
-                message_id=query.message.message_id
-            )
-        except Exception as e:
-            print(f"Couldn't delete message: {e}")
-
-        # Show new ad
-        await message_link_ads(update, context)
-
-    except Exception as e:
-        print(f"Error in link_skip: {e}")
-        import traceback
-        traceback.print_exc()
+    # Cleanup and notify
+    context.user_data.pop(f"link_ad_{ad_id}", None)
+    await query.answer(f"✅ Earned {reward:.6f} SOL", show_alert=True)
+    await message_link_ads(update, context)  # Show next ad
 
 async def ultstat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != CREATOR_ID:
@@ -2959,6 +2883,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
