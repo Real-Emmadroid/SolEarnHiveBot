@@ -2493,42 +2493,62 @@ def build_link_keyboard(ad_id, url):
     ])
 
 async def message_link_ads(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show available link ads to user"""
-    user_id = update.effective_user.id
-    ad = get_next_link_ad(user_id)
+    """Universal ad display that works everywhere"""
+    try:
+        # Determine message source
+        message = update.message or update.callback_query.message
+        chat_id = message.chat.id
+        
+        user_id = update.effective_user.id
+        ad = get_next_link_ad(user_id)
 
-    if not ad:
-        await update.message.reply_text("‼️ No website ads available right now.")
-        return
+        if not ad:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="‼️ No more ads available"
+            )
+            return
 
-    ad_id = ad["id"]
-    html_text, url = build_link_ad_text(ad)
+        ad_id = ad["id"]
+        html_text, url = build_link_ad_text(ad)
 
-    # Store visit start time when showing ad
-    context.user_data[f"link_ad_{ad_id}"] = {
-        "view_start": time.time(),
-        "url": url
-    }
+        # Store ad data with timestamp
+        context.user_data[f"link_ad_{ad_id}"] = {
+            "view_start": time.time(),
+            "url": url,
+            "chat_id": chat_id
+        }
 
-    await update.message.reply_text(
-        html_text,
-        parse_mode="HTML",
-        reply_markup=build_link_keyboard(ad_id, url),
-        disable_web_page_preview=True
-    )
+        # Send new ad
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=html_text,
+            parse_mode="HTML",
+            reply_markup=build_link_keyboard(ad_id, url),
+            disable_web_page_preview=True
+        )
 
+    except Exception as e:
+        print(f"Ad display error: {e}")
+        if update.effective_chat:
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text="⚠️ Failed to load ad"
+            )
+            
 async def link_skip(update: Update, context: ContextTypes.DEFAULT_TYPE, ad_id=None):
-    """Handle ad skipping with proper message cleanup"""
+    """Handle ad skipping with guaranteed ad display"""
     query = update.callback_query
     try:
+        await query.answer("⏭ Ad skipped")  # Immediate feedback
+        
         user_id = query.from_user.id
         chat_id = query.message.chat_id
         message_id = query.message.message_id
         
-        if ad_id is None:
-            ad_id = int(query.data.split(":", 1)[1])
+        ad_id = ad_id or int(query.data.split(":", 1)[1])
 
-        # Record skip in database
+        # 1. Record skip in database
         with get_db_connection() as conn:
             with conn.cursor() as cursor:
                 cursor.execute("""
@@ -2542,30 +2562,40 @@ async def link_skip(update: Update, context: ContextTypes.DEFAULT_TYPE, ad_id=No
                     VALUES (%s, %s)
                     ON CONFLICT DO NOTHING
                 """, (user_id, ad_id))
-                
                 conn.commit()
 
-        # Delete the old message first
+        # 2. Delete old message (skip if fails)
         try:
-            await context.bot.delete_message(
-                chat_id=chat_id,
-                message_id=message_id
-            )
+            await context.bot.delete_message(chat_id, message_id)
         except Exception as e:
-            print(f"Couldn't delete message: {e}")
+            print(f"Message deletion failed: {e}")
 
-        # Show new ad without reply-to
-        await context.bot.send_message(
+        # 3. Clear any existing ad state
+        context.user_data.pop(f"link_ad_{ad_id}", None)
+
+        # 4. Show loading indicator
+        loading_msg = await context.bot.send_message(
             chat_id=chat_id,
-            text="Loading next ad..."
+            text="🔄 Loading next ad..."
         )
 
-        # Show fresh new ad
+        # 5. Display new ad
         await message_link_ads(update, context)
 
-    except Exception as e:
-        print(f"Error in link_skip: {e}")
+        # 6. Clean up loading message
+        try:
+            await loading_msg.delete()
+        except:
+            pass
 
+    except Exception as e:
+        print(f"Skip error: {e}")
+        if update.effective_chat:
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text="⚠️ Error loading next ad"
+            )
+            
 async def link_visited(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle visited callback with proper arguments"""
     query = update.callback_query
@@ -2940,6 +2970,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
