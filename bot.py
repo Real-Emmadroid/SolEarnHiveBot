@@ -2491,250 +2491,195 @@ def build_link_keyboard(ad_id, url):
         ]
     ])
 
-async def message_link_ads(update: Update, context: ContextTypes.DEFAULT_TYPE, previous_message=None):
-    """Show link ads with automatic reward timing and proper context initialization"""
+
+async def message_link_ads(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show link ads with per-user storage and automatic rewards"""
     try:
-        # Initialize user_data if not exists
-        if not hasattr(context, 'user_data'):
-            context.user_data = {}
-        
-        # Delete previous message if exists
-        if previous_message:
-            try:
-                await context.bot.delete_message(
-                    chat_id=previous_message.chat_id,
-                    message_id=previous_message.message_id
-                )
-            except Exception as e:
-                print(f"Couldn't delete message: {e}")
-
         user_id = update.effective_user.id
-        ad = get_next_link_ad(user_id)
+        chat_id = update.effective_chat.id
+        
+        # Initialize per-user storage
+        user_store = context.user_data.setdefault(user_id, {
+            'active_ads': {},
+            'skip_flags': set()
+        })
 
+        # Get next ad (excluding skipped ones)
+        ad = get_next_link_ad(user_id, exclude_ids=user_store['skip_flags'])
         if not ad:
-            await context.bot.send_message(
-                chat_id=update.effective_chat.id,
-                text="‼️ No website ads available right now."
-            )
+            await update.message.reply_text("‼️ No website ads available right now.")
             return
 
         ad_id = ad["id"]
         html_text, url = build_link_ad_text(ad)
 
-        # Initialize ad data structure if not exists
-        if f"link_ad_{ad_id}" not in context.user_data:
-            context.user_data[f"link_ad_{ad_id}"] = {}
-
-        # Store ad data with cooldown start
-        context.user_data[f"link_ad_{ad_id}"].update({
+        # Store ad state
+        ad_key = f"ad_{ad_id}"
+        user_store['active_ads'][ad_key] = {
             "url": url,
-            "message": None,
-            "reward_processed": False
-        })
+            "chat_id": chat_id,
+            "message_id": None,  # Will be set after sending
+            "reward_processed": False,
+            "skip_requested": False
+        }
 
-        # Send new message
-        new_message = await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text=html_text,
+        # Send the ad message
+        message = await update.message.reply_text(
+            html_text,
             parse_mode="HTML",
-            reply_markup=build_link_keyboard(ad_id, url),
+            reply_markup=InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("⏭ Skip", callback_data=f"link_skip:{ad_id}"),
+                    InlineKeyboardButton("🌐 Open Link", url=url)
+                ]
+            ]),
             disable_web_page_preview=True
         )
 
-        # Store message reference
-        context.user_data[f"link_ad_{ad_id}"]["message"] = {
-            "chat_id": new_message.chat_id,
-            "message_id": new_message.message_id
-        }
+        # Update message reference
+        user_store['active_ads'][ad_key]['message_id'] = message.message_id
 
-        # Schedule reward check after 10 seconds
-        if hasattr(context, 'job_queue') and context.job_queue:
+        # Schedule reward processing
+        if hasattr(context, 'job_queue'):
             context.job_queue.run_once(
                 callback=process_link_reward,
-                when=10,
+                when=10,  # 10 seconds
                 data={
-                    "chat_id": new_message.chat_id,
-                    "user_id": user_id,
-                    "ad_id": ad_id,
-                    "message_id": new_message.message_id
+                    'user_id': user_id,
+                    'ad_id': ad_id,
+                    'chat_id': chat_id,
+                    'message_id': message.message_id
                 },
                 name=f"link_reward_{user_id}_{ad_id}"
             )
-        else:
-            print("Warning: Job queue not available")
 
     except Exception as e:
-        print(f"Error showing link ads: {e}")
+        print(f"Error in message_link_ads: {e}")
         import traceback
         traceback.print_exc()
 
 async def process_link_reward(context: ContextTypes.DEFAULT_TYPE):
-    """Reward processing with robust context handling"""
+    """Process rewards with skip protection and per-user storage"""
     try:
-        # 1. Validate context structure
-        if not context:
-            print("Error: Context is None")
-            return
-            
-        # Initialize user_data if not exists
-        if not hasattr(context, 'user_data'):
-            context.user_data = {}
-
-        # 2. Validate job and data
-        if not hasattr(context, 'job') or not context.job:
-            print("Error: Missing job in context")
+        job = context.job
+        if not job or not job.data:
             return
 
-        job_data = getattr(context.job, 'data', {})
-        if not job_data:
-            print("Error: Missing job data")
+        user_id = job.data['user_id']
+        ad_id = job.data['ad_id']
+        chat_id = job.data['chat_id']
+        message_id = job.data['message_id']
+        ad_key = f"ad_{ad_id}"
+
+        # Get user store
+        user_store = context.user_data.get(user_id, {})
+        if not user_store or 'active_ads' not in user_store:
             return
 
-        # 3. Validate required fields
-        required_fields = ['user_id', 'ad_id', 'chat_id', 'message_id']
-        if not all(field in job_data for field in required_fields):
-            print(f"Error: Missing required fields in job data")
+        ad_data = user_store['active_ads'].get(ad_key)
+        if not ad_data:
             return
 
-        user_id = job_data['user_id']
-        ad_id = job_data['ad_id']
-        chat_id = job_data['chat_id']
-        message_id = job_data['message_id']
-        ad_key = f"link_ad_{ad_id}"
-
-        # 4. Validate ad data exists
-        if ad_key not in context.user_data:
-            print(f"Error: Ad data missing for {ad_key}")
+        # Check if skipped or already processed
+        if ad_data.get('skip_requested', False) or ad_data.get('reward_processed', False):
             return
 
-        # 5. Check if already processed
-        if context.user_data[ad_key].get("reward_processed", False):
-            print(f"Reward already processed for ad {ad_id}")
-            return
-
-        # 6. Process reward
+        # Process reward
         with get_db_connection() as conn:
             with conn.cursor() as cursor:
-                try:
-                    # Get CPC value
-                    cursor.execute("SELECT cpc FROM link_ads_details WHERE ad_id = %s", (ad_id,))
-                    result = cursor.fetchone()
-                    if not result:
-                        print(f"No CPC found for ad {ad_id}")
-                        return
-                    
-                    cpc = float(result[0])
-                    reward = round(cpc * 0.8, 6)
-                    
-                    # Record transaction
-                    cursor.execute("""
-                        INSERT INTO link_ads_clicks (ad_id, user_id)
-                        VALUES (%s, %s)
-                        ON CONFLICT DO NOTHING
-                    """, (ad_id, user_id))
-                    
-                    cursor.execute("""
-                        UPDATE link_ads_details 
-                        SET clicks = clicks + 1 
-                        WHERE ad_id = %s
-                    """, (ad_id,))
-                    
+                # Get CPC value
+                cursor.execute("SELECT cpc FROM link_ads_details WHERE ad_id = %s", (ad_id,))
+                result = cursor.fetchone()
+                if not result:
+                    return
+                
+                cpc = float(result[0])
+                reward = round(cpc * 0.8, 6)
+                
+                # Record transaction
+                cursor.execute("""
+                    INSERT INTO link_ads_clicks (ad_id, user_id)
+                    VALUES (%s, %s)
+                    ON CONFLICT DO NOTHING
+                """, (ad_id, user_id))
+                
+                cursor.execute("""
+                    UPDATE link_ads_details 
+                    SET clicks = clicks + 1 
+                    WHERE ad_id = %s
+                """, (ad_id,))
+                
+                cursor.execute("""
+                    UPDATE clickbotusers
+                    SET payout_balance = payout_balance + %s
+                    WHERE id = %s
+                """, (Decimal(str(reward)), user_id))
+                
+                # Process referral
+                cursor.execute("SELECT referral_id FROM clickbotusers WHERE id = %s", (user_id,))
+                if (referrer := cursor.fetchone()) and referrer[0]:
+                    bonus = round(reward * 0.15, 6)
                     cursor.execute("""
                         UPDATE clickbotusers
                         SET payout_balance = payout_balance + %s
                         WHERE id = %s
-                    """, (Decimal(str(reward)), user_id))
-                    
-                    # Process referral
-                    cursor.execute("SELECT referral_id FROM clickbotusers WHERE id = %s", (user_id,))
-                    if (referrer := cursor.fetchone()) and referrer[0]:
-                        bonus = round(reward * 0.15, 6)
-                        cursor.execute("""
-                            UPDATE clickbotusers
-                            SET payout_balance = payout_balance + %s
-                            WHERE id = %s
-                        """, (Decimal(str(bonus)), referrer[0]))
-                    
-                    conn.commit()
-                    
-                    # Mark as processed
-                    context.user_data[ad_key]["reward_processed"] = True
+                    """, (Decimal(str(bonus)), referrer[0]))
+                
+                conn.commit()
 
-                except Exception as db_error:
-                    print(f"Database error: {db_error}")
-                    conn.rollback()
-                    return
+        # Mark as processed
+        user_store['active_ads'][ad_key]['reward_processed'] = True
 
-        # 7. Send notification
-        try:
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=f"✅ You earned {reward:.6f} SOL automatically!",
-                reply_to_message_id=message_id
-            )
-        except Exception as msg_error:
-            print(f"Error sending message: {msg_error}")
+        # Send notification
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=f"✅ You earned {reward:.6f} SOL automatically!",
+            reply_to_message_id=message_id
+        )
 
     except Exception as e:
-        print(f"Unexpected error in reward processing: {str(e)}")
+        print(f"Error in process_link_reward: {e}")
         import traceback
         traceback.print_exc()
 
-async def link_skip(update: Update, context: ContextTypes.DEFAULT_TYPE, ad_id=None):
-    """Handle ad skipping with robust job cancellation"""
+async def link_skip(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle ad skipping with proper cleanup"""
     try:
         query = update.callback_query
-        user_id = query.from_user.id
+        await query.answer()
         
-        if ad_id is None:
-            try:
-                ad_id = int(query.data.split(":", 1)[1])
-            except (IndexError, ValueError) as e:
-                print(f"Error parsing ad_id: {e}")
-                await query.answer("⚠️ Error processing skip")
-                return
+        user_id = query.from_user.id
+        ad_id = int(query.data.split(":")[1])
+        ad_key = f"ad_{ad_id}"
 
-        # Safely handle job cancellation
-        if hasattr(context, 'job_queue') and context.job_queue:
-            job_name = f"link_reward_{user_id}_{ad_id}"
-            try:
-                current_jobs = context.job_queue.get_jobs_by_name(job_name)
-                if current_jobs:  # Check if jobs exist before iteration
-                    for job in current_jobs:
-                        job.schedule_removal()
-            except Exception as job_error:
-                print(f"Error cancelling jobs: {job_error}")
+        # Get user store
+        user_store = context.user_data.get(user_id, {})
+        if not user_store:
+            return
 
-        # Record skip
-        with get_db_connection() as conn:
-            with conn.cursor() as cursor:
-                try:
-                    cursor.execute("""
-                        UPDATE link_ads_details 
-                        SET skipped = skipped + 1 
-                        WHERE ad_id = %s
-                    """, (ad_id,))
-                    
-                    cursor.execute("""
-                        INSERT INTO user_skipped_ads (user_id, ad_id)
-                        VALUES (%s, %s)
-                        ON CONFLICT DO NOTHING
-                    """, (user_id, ad_id))
-                    conn.commit()
-                except Exception as db_error:
-                    print(f"Database error recording skip: {db_error}")
-                    conn.rollback()
-                    await query.answer("⚠️ Error recording skip")
-                    return
+        # Mark as skipped
+        if 'active_ads' in user_store and ad_key in user_store['active_ads']:
+            user_store['active_ads'][ad_key]['skip_requested'] = True
+        
+        # Add to skip history
+        user_store.setdefault('skip_flags', set()).add(ad_id)
 
-        # Delete old message and show new ad
-        await message_link_ads(update, context, previous_message=query.message)
-        await query.answer("Ad skipped")
+        # Delete old message
+        try:
+            await context.bot.delete_message(
+                chat_id=query.message.chat_id,
+                message_id=query.message.message_id
+            )
+        except Exception as e:
+            print(f"Couldn't delete message: {e}")
+
+        # Show new ad
+        await message_link_ads(update, context)
 
     except Exception as e:
-        print(f"Unexpected error in link_skip: {e}")
-        if 'query' in locals():
-            await query.answer("⚠️ An error occurred")
+        print(f"Error in link_skip: {e}")
+        import traceback
+        traceback.print_exc()
 
 async def ultstat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != CREATOR_ID:
