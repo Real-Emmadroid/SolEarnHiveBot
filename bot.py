@@ -2514,7 +2514,6 @@ async def message_link_ads(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # Store ad data with timestamp
         context.user_data[f"link_ad_{ad_id}"] = {
-            "view_start": time.time(),
             "url": url,
             "chat_id": chat_id
         }
@@ -2607,37 +2606,7 @@ async def link_visited(update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id = query.message.chat_id
         message_id = query.message.message_id
         
-        # Get visit data
-        visit_data = context.user_data.get(f"link_ad_{ad_id}")
-        if not visit_data:
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text="❌ Please open the link first before claiming reward",
-                reply_to_message_id=message_id
-            )
-            return
-
-        # Verify duration
-        visit_duration = time.time() - visit_data["view_start"]
-        if visit_duration < 10:
-            remaining = ceil(10 - visit_duration)
-            status_msg = await context.bot.send_message(
-                chat_id=chat_id,
-                text=f"⌛ Please wait {remaining} more seconds to claim your reward",
-                reply_to_message_id=message_id
-            )
-            
-            # Delete after delay
-            await asyncio.sleep(5)
-            try:
-                await context.bot.delete_message(
-                    chat_id=chat_id,
-                    message_id=status_msg.message_id
-                )
-            except:
-                pass
-            return
-
+        
         # Process reward
         with get_db_connection() as conn:
             with conn.cursor() as cursor:
@@ -2679,18 +2648,11 @@ async def link_visited(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reward_msg = await context.bot.send_message(
             chat_id=chat_id,
             text=f"🎉 Congratulations! You've earned {reward:.6f} SOL\n\n"
-                 f"Visited for: {int(visit_duration)} seconds\n"
                  f"Ad ID: {ad_id}",
             reply_to_message_id=message_id
         )
-
-        # Clean up and show next ad
-        context.user_data.pop(f"link_ad_{ad_id}", None)
-        await asyncio.sleep(3)  # Let user see confirmation
-        await message_link_ads(update, context)
-
-        # Optional: Delete reward message after showing new ad
-        # await context.bot.delete_message(chat_id=chat_id, message_id=reward_msg.message_id)
+        
+        await start(update, context)
 
     except Exception as e:
         print(f"Error in link_visited: {e}")
@@ -2699,11 +2661,6 @@ async def link_visited(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text="⚠️ Failed to process reward. Please try again.",
             reply_to_message_id=message_id
         )
-        await asyncio.sleep(5)
-        try:
-            await context.bot.delete_message(chat_id=chat_id, message_id=error_msg.message_id)
-        except:
-            pass
             
 async def ultstat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != CREATOR_ID:
@@ -2970,6 +2927,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
