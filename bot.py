@@ -2553,104 +2553,164 @@ async def message_link_ads(update: Update, context: ContextTypes.DEFAULT_TYPE, p
         print(f"Error showing link ads: {e}")
 
 async def process_link_reward(context: ContextTypes.DEFAULT_TYPE):
-    """Automatically process reward after 10 seconds"""
-    job = context.job
-    user_id = job.data["user_id"]
-    ad_id = job.data["ad_id"]
-    chat_id = job.data["chat_id"]
-    message_id = job.data["message_id"]
-
-    # Check if user skipped or already rewarded
-    if f"link_ad_{ad_id}" not in context.user_data:
-        return
-
-    if context.user_data[f"link_ad_{ad_id}"]["reward_processed"]:
-        return
-
-    # Process reward
-    with get_db_connection() as conn:
-        with conn.cursor() as cursor:
-            cursor.execute("SELECT cpc FROM link_ads_details WHERE ad_id = %s", (ad_id,))
-            cpc = float(cursor.fetchone()[0])
-            
-            reward = round(cpc * 0.8, 6)
-            
-            cursor.execute("""
-                INSERT INTO link_ads_clicks (ad_id, user_id)
-                VALUES (%s, %s, %s)
-                ON CONFLICT DO NOTHING
-            """, (ad_id, user_id))
-            
-            cursor.execute("""
-                UPDATE link_ads_details 
-                SET clicks = clicks + 1 
-                WHERE ad_id = %s
-            """, (ad_id,))
-            
-            cursor.execute("""
-                UPDATE clickbotusers
-                SET payout_balance = payout_balance + %s
-                WHERE id = %s
-            """, (Decimal(str(reward)), user_id))
-            
-            # Process referral
-            cursor.execute("SELECT referral_id FROM clickbotusers WHERE id = %s", (user_id,))
-            if referrer := cursor.fetchone():
-                bonus = round(reward * 0.15, 6)
-                cursor.execute("""
-                    UPDATE clickbotusers
-                    SET payout_balance = payout_balance + %s
-                    WHERE id = %s
-                """, (Decimal(str(bonus)), referrer[0]))
-            
-            conn.commit()
-
-    # Mark as processed
-    context.user_data[f"link_ad_{ad_id}"]["reward_processed"] = True
-
-    # Send reward notification
+    """Automatically process reward after 10 seconds with full error handling"""
     try:
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text=f"✅ Congratulations, you earned {reward:.6f} SOL for visiting the link!",
-            reply_to_message_id=message_id
-        )
+        # Validate job data exists
+        if not hasattr(context, 'job') or not context.job or not context.job.data:
+            print("Error: Missing job data")
+            return
+
+        job = context.job
+        required_fields = ['user_id', 'ad_id', 'chat_id', 'message_id']
+        
+        # Check all required fields exist
+        if not all(field in job.data for field in required_fields):
+            print(f"Error: Missing required job data fields. Got: {job.data.keys()}")
+            return
+
+        user_id = job.data["user_id"]
+        ad_id = job.data["ad_id"]
+        chat_id = job.data["chat_id"]
+        message_id = job.data["message_id"]
+
+        # Validate user_data structure
+        if not hasattr(context, 'user_data'):
+            print("Error: Missing user_data in context")
+            return
+
+        # Check if user skipped or already rewarded
+        ad_key = f"link_ad_{ad_id}"
+        if ad_key not in context.user_data:
+            print(f"Ad {ad_id} not found in user_data for user {user_id}")
+            return
+
+        if context.user_data[ad_key].get("reward_processed", False):
+            print(f"Reward already processed for ad {ad_id}, user {user_id}")
+            return
+
+        # Process reward
+        with get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                try:
+                    # Get CPC value
+                    cursor.execute("SELECT cpc FROM link_ads_details WHERE ad_id = %s", (ad_id,))
+                    result = cursor.fetchone()
+                    if not result:
+                        print(f"No CPC found for ad {ad_id}")
+                        return
+                    cpc = float(result[0])
+                    
+                    reward = round(cpc * 0.8, 6)
+                    
+                    # Record completion
+                    cursor.execute("""
+                        INSERT INTO link_ads_clicks (ad_id, user_id)
+                        VALUES (%s, %s, %s)
+                        ON CONFLICT DO NOTHING
+                    """, (ad_id, user_id))
+                    
+                    # Update click count
+                    cursor.execute("""
+                        UPDATE link_ads_details 
+                        SET clicks = clicks + 1 
+                        WHERE ad_id = %s
+                    """, (ad_id,))
+                    
+                    # Award user
+                    cursor.execute("""
+                        UPDATE clickbotusers
+                        SET payout_balance = payout_balance + %s
+                        WHERE id = %s
+                    """, (Decimal(str(reward)), user_id))
+                    
+                    # Process referral
+                    cursor.execute("SELECT referral_id FROM clickbotusers WHERE id = %s", (user_id,))
+                    if referrer := cursor.fetchone():
+                        bonus = round(reward * 0.15, 6)
+                        cursor.execute("""
+                            UPDATE clickbotusers
+                            SET payout_balance = payout_balance + %s
+                            WHERE id = %s
+                        """, (Decimal(str(bonus)), referrer[0]))
+                    
+                    conn.commit()
+
+                except Exception as db_error:
+                    print(f"Database error processing reward: {db_error}")
+                    conn.rollback()
+                    return
+
+        # Mark as processed
+        context.user_data[ad_key]["reward_processed"] = True
+
+        # Send reward notification
+        try:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=f"✅ Congratulations, you earned {reward:.6f} SOL for visiting the link!",
+                reply_to_message_id=message_id
+            )
+        except Exception as msg_error:
+            print(f"Couldn't send reward message: {msg_error}")
+
     except Exception as e:
-        print(f"Couldn't send reward message: {e}")
+        print(f"Unexpected error in process_link_reward: {e}")
 
 async def link_skip(update: Update, context: ContextTypes.DEFAULT_TYPE, ad_id=None):
-    """Handle ad skipping with job cancellation"""
-    query = update.callback_query
-    user_id = query.from_user.id
-    chat_id = query.message.chat_id
-    
-    ad_id = ad_id or int(query.data.split(":")[1])
+    """Handle ad skipping with robust job cancellation"""
+    try:
+        query = update.callback_query
+        user_id = query.from_user.id
+        
+        if ad_id is None:
+            try:
+                ad_id = int(query.data.split(":", 1)[1])
+            except (IndexError, ValueError) as e:
+                print(f"Error parsing ad_id: {e}")
+                await query.answer("⚠️ Error processing skip")
+                return
 
-    # Cancel any pending reward job
-    job_name = f"link_reward_{user_id}_{ad_id}"
-    current_jobs = context.job_queue.get_jobs_by_name(job_name)
-    for job in current_jobs:
-        job.schedule_removal()
+        # Safely handle job cancellation
+        if hasattr(context, 'job_queue') and context.job_queue:
+            job_name = f"link_reward_{user_id}_{ad_id}"
+            try:
+                current_jobs = context.job_queue.get_jobs_by_name(job_name)
+                if current_jobs:  # Check if jobs exist before iteration
+                    for job in current_jobs:
+                        job.schedule_removal()
+            except Exception as job_error:
+                print(f"Error cancelling jobs: {job_error}")
 
-    # Record skip
-    with get_db_connection() as conn:
-        with conn.cursor() as cursor:
-            cursor.execute("""
-                UPDATE link_ads_details 
-                SET skipped = skipped + 1 
-                WHERE ad_id = %s
-            """, (ad_id,))
-            
-            cursor.execute("""
-                INSERT INTO user_skipped_ads (user_id, ad_id)
-                VALUES (%s, %s)
-                ON CONFLICT DO NOTHING
-            """, (user_id, ad_id))
-            conn.commit()
+        # Record skip
+        with get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                try:
+                    cursor.execute("""
+                        UPDATE link_ads_details 
+                        SET skipped = skipped + 1 
+                        WHERE ad_id = %s
+                    """, (ad_id,))
+                    
+                    cursor.execute("""
+                        INSERT INTO user_skipped_ads (user_id, ad_id)
+                        VALUES (%s, %s)
+                        ON CONFLICT DO NOTHING
+                    """, (user_id, ad_id))
+                    conn.commit()
+                except Exception as db_error:
+                    print(f"Database error recording skip: {db_error}")
+                    conn.rollback()
+                    await query.answer("⚠️ Error recording skip")
+                    return
 
-    # Delete old message and show new ad
-    await message_link_ads(update, context, previous_message=query.message)
+        # Delete old message and show new ad
+        await message_link_ads(update, context, previous_message=query.message)
+        await query.answer("Ad skipped")
 
+    except Exception as e:
+        print(f"Unexpected error in link_skip: {e}")
+        if 'query' in locals():
+            await query.answer("⚠️ An error occurred")
 
 async def ultstat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != CREATOR_ID:
@@ -2917,6 +2977,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
