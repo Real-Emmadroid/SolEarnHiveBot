@@ -2441,7 +2441,20 @@ def get_next_link_ad(user_id, exclude_ad_id=None):
     """Fetch next available link ad with proper filtering"""
     with get_db_connection() as conn:
         with conn.cursor(row_factory=dict_row) as cursor:
-            cursor.execute("""
+            # Handle both single ID and collection of IDs
+            exclude_condition = ""
+            params = [user_id, user_id]
+            
+            if exclude_ad_id:
+                if isinstance(exclude_ad_id, (set, list, tuple)):
+                    if exclude_ad_id:  # Only add condition if set is not empty
+                        exclude_condition = "AND a.id NOT IN %s"
+                        params.append(tuple(exclude_ad_id))
+                else:
+                    exclude_condition = "AND a.id <> %s"
+                    params.append(exclude_ad_id)
+            
+            cursor.execute(f"""
                 SELECT 
                     a.id,
                     a.ad_type,
@@ -2461,10 +2474,10 @@ def get_next_link_ad(user_id, exclude_ad_id=None):
                   AND a.id NOT IN (
                       SELECT ad_id FROM user_skipped_ads WHERE user_id = %s
                   )
-                  AND a.id <> COALESCE(%s, -1)
+                  {exclude_condition}
                 ORDER BY a.created_at ASC
                 LIMIT 1
-            """, (user_id, user_id, exclude_ad_id))
+            """, params)
             return cursor.fetchone()
 
 def build_link_ad_text(ad):
@@ -2493,7 +2506,7 @@ def build_link_keyboard(ad_id, url):
 
 
 async def message_link_ads(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show link ads with per-user storage and automatic rewards"""
+    """Show link ads with proper skip handling"""
     try:
         user_id = update.effective_user.id
         chat_id = update.effective_chat.id
@@ -2501,11 +2514,16 @@ async def message_link_ads(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Initialize per-user storage
         user_store = context.user_data.setdefault(user_id, {
             'active_ads': {},
-            'skip_flags': set()
+            'skipped_ads': set()  # Changed to match parameter name
         })
 
         # Get next ad (excluding skipped ones)
-        ad = get_next_link_ad(user_id, exclude_ad_id=user_store['skip_flags'])
+        skipped_ids = user_store['skipped_ads']
+        ad = get_next_link_ad(
+            user_id, 
+            exclude_ad_id=tuple(skipped_ids) if skipped_ids else None
+        )
+        
         if not ad:
             await update.message.reply_text("‼️ No website ads available right now.")
             return
@@ -2518,7 +2536,7 @@ async def message_link_ads(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_store['active_ads'][ad_key] = {
             "url": url,
             "chat_id": chat_id,
-            "message_id": None,  # Will be set after sending
+            "message_id": None,
             "reward_processed": False,
             "skip_requested": False
         }
@@ -2527,12 +2545,7 @@ async def message_link_ads(update: Update, context: ContextTypes.DEFAULT_TYPE):
         message = await update.message.reply_text(
             html_text,
             parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup([
-                [
-                    InlineKeyboardButton("⏭ Skip", callback_data=f"link_skip:{ad_id}"),
-                    InlineKeyboardButton("🌐 Open Link", url=url)
-                ]
-            ]),
+            reply_markup=build_link_keyboard(ad_id, url),
             disable_web_page_preview=True
         )
 
@@ -2543,7 +2556,7 @@ async def message_link_ads(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if hasattr(context, 'job_queue'):
             context.job_queue.run_once(
                 callback=process_link_reward,
-                when=10,  # 10 seconds
+                when=10,
                 data={
                     'user_id': user_id,
                     'ad_id': ad_id,
@@ -2661,8 +2674,8 @@ async def link_skip(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if 'active_ads' in user_store and ad_key in user_store['active_ads']:
             user_store['active_ads'][ad_key]['skip_requested'] = True
         
-        # Add to skip history
-        user_store.setdefault('skip_flags', set()).add(ad_id)
+        # Add to skip history (using correct key)
+        user_store.setdefault('skipped_ads', set()).add(ad_id)
 
         # Delete old message
         try:
@@ -2946,6 +2959,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
