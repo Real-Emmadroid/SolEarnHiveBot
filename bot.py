@@ -2619,10 +2619,10 @@ async def link_visited(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reward = round(cpc * 0.8, 6)
                 
                 cursor.execute("""
-                    INSERT INTO link_ads_clicks (ad_id, user_id, visit_duration)
-                    VALUES (%s, %s, %s)
+                    INSERT INTO link_ads_clicks (ad_id, user_id)
+                    VALUES (%s, %s)
                     ON CONFLICT DO NOTHING
-                """, (ad_id, user_id, visit_duration))
+                """, (ad_id, user_id))
                 
                 cursor.execute("""
                     UPDATE link_ads_details 
@@ -2943,6 +2943,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
