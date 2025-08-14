@@ -2581,10 +2581,10 @@ async def link_visited(update: Update, context: ContextTypes.DEFAULT_TYPE, ad_id
             
             # Record completion
             cursor.execute("""
-                INSERT INTO link_ads_clicks (ad_id, user_id, visit_duration)
-                VALUES (%s, %s, %s)
+                INSERT INTO link_ads_clicks (ad_id, user_id)
+                VALUES (%s, %s)
                 ON CONFLICT DO NOTHING
-            """, (ad_id, user_id, visit_duration))
+            """, (ad_id, user_id))
             
             # Update click count
             cursor.execute("""
@@ -2616,7 +2616,7 @@ async def link_visited(update: Update, context: ContextTypes.DEFAULT_TYPE, ad_id
     # Cleanup and notify
     context.user_data.pop(f"link_ad_{ad_id}", None)
     await query.answer(f"✅ Earned {reward:.6f} SOL", show_alert=True)
-    await message_link_ads(update, context)  # Show next ad
+    await start(update, context) 
 
 
 
@@ -2885,6 +2885,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
