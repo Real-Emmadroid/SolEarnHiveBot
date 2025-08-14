@@ -2611,11 +2611,6 @@ async def link_visited(update: Update, context: ContextTypes.DEFAULT_TYPE, ad_id
                     WHERE ad_id = %s AND user_id = %s
                 """, (ad_id, user_id))
                 if cursor.fetchone():
-                    await context.bot.send_message(
-                        chat_id=chat_id,
-                        text="⚠️ You’ve already earned from this ad.",
-                        reply_to_message_id=message_id
-                    )
                     return  # Stop further processing
 
                 # 2️⃣ Get CPC for this ad
@@ -2659,7 +2654,7 @@ async def link_visited(update: Update, context: ContextTypes.DEFAULT_TYPE, ad_id
         # ✅ Send reward message
         await context.bot.send_message(
             chat_id=chat_id,
-            text=f"🎉 Congratulations! You've earned {reward:.6f} SOL\n\nAd ID: {ad_id}",
+            text=f"🎉 Congratulations! You've earned {reward:.6f} SOL",
             reply_to_message_id=message_id
         )
 
@@ -2667,12 +2662,6 @@ async def link_visited(update: Update, context: ContextTypes.DEFAULT_TYPE, ad_id
 
     except Exception as e:
         print(f"Error in link_visited: {e}")
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text="⚠️ Failed to process reward. Please try again.",
-            reply_to_message_id=message_id
-        )
-
             
 async def ultstat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != CREATOR_ID:
@@ -2939,6 +2928,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
