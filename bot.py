@@ -334,13 +334,9 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
             context.user_data['expecting_password'] = True
             await password_button_callback(update, context)
 
-        elif data == "task_notification":
-            await query.edit_message_text(
-                "🔔 Task Notification settings will be available soon.\n\n"
-                "Stay tuned for the update!",
-                parse_mode="Markdown"
-            )
-
+        elif data == "toggle_task_notification":
+            await toggle_task_notification(update, context)
+            
         elif data.startswith("watch_skip:"):
             _, ad_id = data.split(":")
             await watch_skip(update, context, int(ad_id))
@@ -759,21 +755,93 @@ async def referrals_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard), disable_web_page_preview=True)
 
 
+# SETTINGS COMMAND
 async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+
+    # Get current preference
+    cur.execute("SELECT notify_tasks FROM clickbotusers WHERE id = %s", (user_id,))
+    current_pref = cur.fetchone()[0]
+
+    notif_status = "✅ Enabled" if current_pref else "❌ Disabled"
+
     keyboard = [
         [InlineKeyboardButton("📢 Main Channel", url=MAIN_CHANNEL_LINK)],
-        [InlineKeyboardButton("⚙ Task Notification", callback_data="task_notification")]
+        [InlineKeyboardButton(f"⚙ Task Notification: {notif_status}", callback_data="toggle_task_notification")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     await update.message.reply_text(
         "⚙ **Settings**\n\n"
-        "Here you can manage your preferences and notifications.\n"
-        "Select an option below:",
+        "Manage your preferences and notifications below:",
         parse_mode="Markdown",
         reply_markup=reply_markup
     )
-        
+
+
+# TOGGLE TASK NOTIFICATION
+async def toggle_task_notification(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+
+    # Get current preference
+    cur.execute("SELECT notify_tasks FROM clickbotusers WHERE id = %s", (user_id,))
+    current_pref = cur.fetchone()[0]
+
+    # Toggle preference
+    new_pref = not current_pref
+    cur.execute("UPDATE clickbotusers SET notify_tasks = %s WHERE id = %s", (new_pref, user_id))
+    conn.commit()
+
+    status = "✅ Enabled" if new_pref else "❌ Disabled"
+
+    # Update keyboard with new status
+    keyboard = [
+        [InlineKeyboardButton("📢 Main Channel", url=MAIN_CHANNEL_LINK)],
+        [InlineKeyboardButton(f"⚙ Task Notification: {status}", callback_data="toggle_task_notification")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await query.edit_message_text(
+        text="⚙ **Settings**\n\nManage your preferences and notifications below:",
+        parse_mode="Markdown",
+        reply_markup=reply_markup
+    )
+
+# DAILY TASK COUNT
+async def send_daily_task_count(context: CallbackContext):
+    # Get today's ads count (only active ads)
+    cur.execute("SELECT COUNT(*) FROM ads WHERE status = 'active' AND date(created_at) = CURRENT_DATE")
+    ads_count = cur.fetchone()[0]
+
+    if ads_count == 0:
+        return  # No ads today, skip sending
+
+    # Fetch all opted-in users
+    cur.execute("SELECT id FROM clickbotusers WHERE notify_tasks = TRUE")
+    users = cur.fetchall()
+
+    for (uid,) in users:
+        try:
+            await context.bot.send_message(
+                chat_id=uid,
+                text=(
+                    "✅ *New task available*\n\n"
+                    f"❓ We found *{ads_count}* new tasks available for you today!\n\n"
+                    "_You can disable this notification in settings._"
+                ),
+                parse_mode="Markdown"
+            )
+        except Exception:
+            continue
+
+
+# SCHEDULE THE JOB
+job_queue.run_daily(
+    send_daily_task_count,
+    time=time(21, 0, tzinfo=pytz.UTC)  # 9 PM UTC
+)
 
 
 async def my_ads(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -3214,6 +3282,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
