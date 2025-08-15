@@ -44,7 +44,7 @@ TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CREATOR_ID = 7112609512  # Replace with your actual Telegram user ID
 BOT_USERNAME = "solearnhivebot"
 MAIN_CHANNEL_LINK = "https://t.me/SolEarnHiveUpdates"
-MIN_WITHDRAW = 0.1  # Minimum allowed
+MIN_WITHDRAW = 0.005  # Minimum allowed
 MAX_ADS_PER_USER = 50
 UTC = pytz.utc
 NOWPAYMENTS_API_KEY = "5RRXFWG-7ZY41Q9-P19J9DZ-Q3QSZJM"
@@ -473,9 +473,9 @@ async def process_deposit_amount(update: Update, context: ContextTypes.DEFAULT_T
 
     try:
         amount = float(text)
-        if amount < 0.0002:  # Minimum deposit check
+        if amount < 0.005:  # Minimum deposit check
             await update.message.reply_text(
-                "❌ Minimum deposit is 0.002 SOL. Please enter a larger amount.",
+                "❌ Minimum deposit is 0.005 SOL. Please enter a larger amount.",
                 reply_markup=ReplyKeyboardMarkup([["🔙Back"]], resize_keyboard=True)
             )
             return ASK_DEPOSIT_AMOUNT
@@ -1095,7 +1095,7 @@ async def channel_username_handler(update: Update, context: ContextTypes.DEFAULT
     except Exception as e:
         await update.message.reply_text(
             f"❌ Could not access the channel/group: {e}\n"
-            "Make sure the link/username is correct and the bot is added as admin (except for private links).",
+            "Make sure the link/username is correct and the bot is added as admin.",
             reply_markup=ReplyKeyboardMarkup([["🔙 Back"]], resize_keyboard=True, one_time_keyboard=True),
         )
         return CHANNEL_USERNAME
@@ -1122,7 +1122,7 @@ async def channel_title_handler(update: Update, context: ContextTypes.DEFAULT_TY
 
     context.user_data["channel_title"] = title
     await update.message.reply_text(
-        "Enter a description for your ad:", reply_markup=ReplyKeyboardMarkup([["🔙 Back"]], resize_keyboard=True, one_time_keyboard=True)
+        "✏️ Create an engaging description for your AD:\n\n• This will be the first thing users see and it should grab their attention and make them want to click on your link or check out your product/service.", reply_markup=ReplyKeyboardMarkup([["🔙 Back"]], resize_keyboard=True, one_time_keyboard=True)
     )
     return CHANNEL_DESCRIPTION
 
@@ -1140,8 +1140,8 @@ async def channel_description_handler(update: Update, context: ContextTypes.DEFA
     context.user_data["channel_description"] = desc
     await update.message.reply_text(
         "What is the most you want to pay per click?\n\n"
-        "Minimum Cost Per Click (CPC): 0.0001 SOL\n\n"
-        "➡️ Enter a value in SOL:",
+        "Minimum Cost Per Click (CPC): 0.000062 SOL\n\n"
+        "➡️ Enter your desired value in SOL:",
         reply_markup=ReplyKeyboardMarkup([["🔙 Back"]], resize_keyboard=True, one_time_keyboard=True),
     )
     return CHANNEL_CPC
@@ -1159,7 +1159,7 @@ async def channel_cpc_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text("Invalid value. Please enter a numeric value for CPC in SOL.")
         return CHANNEL_CPC
 
-    if cpc < 0.0001:
+    if cpc < 0.000062:
         await update.message.reply_text("Minimum CPC is 0.0001 SOL. Please enter a valid value.")
         return CHANNEL_CPC
 
@@ -1176,9 +1176,9 @@ async def channel_cpc_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     context.user_data["user_balance"] = balance
 
     await update.message.reply_text(
-        f"How much do you want to spend on this campaign?\n\n"
+        f"How much do you want to spend on this ad campaign?\n\n"
         f"Available balance: {balance:.8f} SOL\n\n"
-        "➡️ Enter a value in SOL:",
+        "➡️ Enter your desired budget in SOL:",
         reply_markup=ReplyKeyboardMarkup([["➕ Deposit", "🔙 Back"]], resize_keyboard=True, one_time_keyboard=True),
     )
     return CHANNEL_BUDGET
@@ -1622,7 +1622,8 @@ async def bot_title_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     context.user_data["bot_title"] = title
     await update.message.reply_text(
-        "Enter a description for your ad:",
+        "✏️ Enter a description for your ad:\n\n• This will be the first thing users see and it should grab their attention and make them want to click on your link or check out your product/service.
+",
         reply_markup=ReplyKeyboardMarkup([["🔙 Back"]], resize_keyboard=True, one_time_keyboard=True),
     )
     return BOT_DESCRIPTION
@@ -1641,9 +1642,9 @@ async def bot_description_handler(update: Update, context: ContextTypes.DEFAULT_
     context.user_data["bot_description"] = desc
     await update.message.reply_text(
         "What is the most you want to pay per click?\n\n"
-        "Minimum Cost Per Click (CPC): 0.00006 SOL\n\n"
-        "Recommended: 0.00008-0.0001 SOL\n\n"
-        "➡️ Enter a value in SOL:",
+        "Minimum Cost Per Click (CPC): 0.00003 SOL\n\n"
+        "Recommended: 0.00003-0.0001 SOL\n\n"
+        "➡️ Enter a desired value in SOL:",
         reply_markup=ReplyKeyboardMarkup([["🔙 Back"]], resize_keyboard=True, one_time_keyboard=True),
     )
     return BOT_CPC
@@ -1661,8 +1662,8 @@ async def bot_cpc_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Invalid value. Please enter a numeric value for CPC in SOL.")
         return BOT_CPC
 
-    if cpc < 0.00006:
-        await update.message.reply_text("Minimum CPC is 0.00006 SOL. Please enter a valid value.")
+    if cpc < 0.00003:
+        await update.message.reply_text("Minimum CPC is 0.00003 SOL. Please enter a valid value.")
         return BOT_CPC
 
     context.user_data["bot_cpc"] = cpc
@@ -1678,7 +1679,7 @@ async def bot_cpc_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["user_balance"] = balance
 
     await update.message.reply_text(
-        f"How much do you want to spend on this campaign?\n\n"
+        f"How much do you want to spend on this ads campaign?\n\n"
         f"Available balance: {balance:.8f} SOL\n\n"
         "➡️ Enter a value in SOL:",
         reply_markup=ReplyKeyboardMarkup([["➕ Deposit", "🔙 Back"]], resize_keyboard=True, one_time_keyboard=True),
@@ -2188,8 +2189,8 @@ async def post_views_message_handler(update: Update, context: ContextTypes.DEFAU
     await update.message.reply_text(
         "💰 <b>Set Cost Per View (CPV)</b>\n\n"
         "Enter the maximum amount you'll pay when someone views this post:\n\n"
-        "<i>Minimum: 0.00006 SOL\n"
-        "Recommended: 0.0001-0.001 SOL</i>",
+        "<i>Minimum: 0.00003 SOL\n"
+        "Recommended: 0.00003-0.0001 SOL</i>",
         parse_mode="HTML",
         reply_markup=reply_markup
     )
@@ -2206,11 +2207,11 @@ async def post_views_cpc_handler(update: Update, context: ContextTypes.DEFAULT_T
 
     try:
         cpc = float(cpc_text)
-        if cpc < 0.00006:
+        if cpc < 0.00003:
             raise ValueError("Below minimum")
     except ValueError:
         await update.message.reply_text(
-            "❌ Invalid amount. Minimum is 0.00006 SOL.\n"
+            "❌ Invalid amount. Minimum is 0.00003 SOL.\n"
             "Please enter a valid CPV:",
             reply_markup=reply_markup
         )
@@ -2264,12 +2265,12 @@ async def post_views_budget_handler(update: Update, context: ContextTypes.DEFAUL
         budget = float(budget_text)
         if budget > user_balance:
             raise ValueError("Insufficient funds")
-        if budget < 0.001:
+        if budget < 0.0001:
             raise ValueError("Below minimum")
     except ValueError as e:
         error_msg = {
             "Insufficient funds": f"❌ Only {user_balance:.6f} SOL available",
-            "Below minimum": "❌ Minimum budget is 0.001 SOL"
+            "Below minimum": "❌ Minimum budget is 0.0001 SOL"
         }.get(str(e), "❌ Invalid amount. Please enter a number")
 
         await update.message.reply_text(
@@ -2677,9 +2678,9 @@ async def link_description_handler(update: Update, context: ContextTypes.DEFAULT
         await cancel_handler(update, context)
         return ConversationHandler.END
 
-    if len(desc) < 20:
+    if len(desc) < 10:
         await update.message.reply_text(
-            "❌ Description too short (min 20 characters)\n"
+            "❌ Description too short (min 10 characters)\n"
             "Please enter a detailed description:",
             reply_markup=ReplyKeyboardMarkup([["🔙 Back"]], resize_keyboard=True)
         )
@@ -2692,8 +2693,8 @@ async def link_description_handler(update: Update, context: ContextTypes.DEFAULT
         "💰 <b>Set Your Cost-Per-Click (CPC)</b>\n\n"
         "This is the max you'll pay when someone clicks your link\n\n"
         "• Minimum: 0.00006 SOL\n"
-        "• Recommended: 0.0001-0.01 SOL\n\n"
-        "<i>Example entry: 0.001</i>"
+        "• Recommended: 0.00006-0.0001 SOL\n\n"
+        "<i>Example entry: 0.0001</i>"
     )
     
     await update.message.reply_text(
@@ -2772,7 +2773,7 @@ async def link_budget_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         budget = float(text)
         if budget > balance:
             raise ValueError("Insufficient funds")
-        if budget < 0.001:
+        if budget < 0.0001:
             raise ValueError("Below minimum")
     except ValueError as e:
         error_msg = {
@@ -2781,7 +2782,7 @@ async def link_budget_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
                 f"You requested: {text} SOL\n\n"
                 "Please deposit more or reduce budget"
             ),
-            "Below minimum": "❌ Minimum budget is 0.001 SOL",
+            "Below minimum": "❌ Minimum budget is 0.0001 SOL",
         }.get(str(e), "❌ Invalid amount. Please enter a number")
 
         await update.message.reply_text(
@@ -3372,6 +3373,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
