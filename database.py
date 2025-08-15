@@ -47,6 +47,15 @@ def init_databases():
             ''')
 
             cursor.execute('''
+                CREATE TABLE IF NOT EXISTS deposits (
+                    id SERIAL PRIMARY KEY,
+                    user_id BIGINT NOT NULL,
+                    amount NUMERIC(18,8) NOT NULL,
+                    created_at TIMESTAMP DEFAULT NOW()
+                );
+            ''')
+
+            cursor.execute('''
                 CREATE TABLE IF NOT EXISTS channel_ads_details (
                     id SERIAL PRIMARY KEY,
                     ad_id BIGINT NOT NULL REFERENCES ads(id) ON DELETE CASCADE,
@@ -298,6 +307,7 @@ def with_retry(max_attempts=3, delay=0.5):
 if __name__ == "__main__":
     init_databases()
     print("Databases initialized in Supabase PostgreSQL database.")
+
 
 
 
