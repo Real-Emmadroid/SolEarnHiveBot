@@ -837,13 +837,6 @@ async def send_daily_task_count(context: CallbackContext):
             continue
 
 
-# SCHEDULE THE JOB
-job_queue.run_daily(
-    send_daily_task_count,
-    time=time(21, 0, tzinfo=pytz.UTC)  # 9 PM UTC
-)
-
-
 async def my_ads(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
@@ -3161,6 +3154,10 @@ t.start()
 def main():
     application = ApplicationBuilder().token(TOKEN).build()
     application.add_error_handler(error_handler)
+    application.job_queue.run_daily(
+        send_daily_task_count,
+        time=time(9, 0, tzinfo=pytz.UTC)  # 9 AM UTC
+    )
 
     # 1. Create conversation handlers FIRST
     withdraw_conv_handler = ConversationHandler(
@@ -3282,6 +3279,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
