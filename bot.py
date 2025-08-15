@@ -17,8 +17,7 @@ from telegram.error import BadRequest, TelegramError
 import traceback
 import html
 import time
-import time, hmac, hashlib
-from datetime import datetime  # if you need both
+import hmac, hashlib
 import pytz
 from psycopg.rows import dict_row  # ✅ for psycopg3
 from psycopg import sql
@@ -30,7 +29,7 @@ from functools import lru_cache
 from io import BytesIO
 import threading
 from collections import defaultdict
-from datetime import datetime, time, timedelta, timezone
+from datetime import datetime, time, timezone, timedelta
 from telegram import MessageEntity, MessageOriginUser, MessageOriginChat, MessageOriginChannel, InputMediaPhoto, Update, ChatMember, Poll, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, ReplyKeyboardRemove, CallbackQuery, ChatMember, ChatPermissions, BotCommand, Bot
 from telegram.ext import ApplicationBuilder, Application, CommandHandler, ConversationHandler, CallbackContext, CallbackQueryHandler, MessageHandler, filters, JobQueue, ContextTypes, ChatMemberHandler
 from telegram.constants import ChatAction, ChatMemberStatus, ParseMode, MessageEntityType
@@ -3156,7 +3155,7 @@ def main():
     application.add_error_handler(error_handler)
     application.job_queue.run_daily(
         send_daily_task_count,
-        time=time(hour=9, minute=0, tzinfo=timezone.utc),  # 9 AM UTC
+        time=datetime.time(hour=9, minute=0, tzinfo=timezone.utc),  # Explicitly use datetime.time
         name="daily_task_notification"
     )
 
@@ -3280,6 +3279,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
