@@ -415,6 +415,7 @@ async def unified_message_handler(update: Update, context: ContextTypes.DEFAULT_
         await start_withdraw(update, context)
     elif text in ("🔙 Back", "🔙 Cancel"):
         await start(update, context)
+        return ConversationHandler.END
     # DO NOT add a final else clause 
 
 
@@ -3308,6 +3309,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
