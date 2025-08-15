@@ -759,8 +759,8 @@ async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
     # Get current preference
-    cur.execute("SELECT notify_tasks FROM clickbotusers WHERE id = %s", (user_id,))
-    current_pref = cur.fetchone()[0]
+    cursor.execute("SELECT notify_tasks FROM clickbotusers WHERE id = %s", (user_id,))
+    current_pref = cursor.fetchone()[0]
 
     notif_status = "✅ Enabled" if current_pref else "❌ Disabled"
 
@@ -785,12 +785,12 @@ async def toggle_task_notification(update: Update, context: ContextTypes.DEFAULT
     user_id = query.from_user.id
 
     # Get current preference
-    cur.execute("SELECT notify_tasks FROM clickbotusers WHERE id = %s", (user_id,))
-    current_pref = cur.fetchone()[0]
+    cursor.execute("SELECT notify_tasks FROM clickbotusers WHERE id = %s", (user_id,))
+    current_pref = cursor.fetchone()[0]
 
     # Toggle preference
     new_pref = not current_pref
-    cur.execute("UPDATE clickbotusers SET notify_tasks = %s WHERE id = %s", (new_pref, user_id))
+    cursor.execute("UPDATE clickbotusers SET notify_tasks = %s WHERE id = %s", (new_pref, user_id))
     conn.commit()
 
     status = "✅ Enabled" if new_pref else "❌ Disabled"
@@ -808,18 +808,19 @@ async def toggle_task_notification(update: Update, context: ContextTypes.DEFAULT
         reply_markup=reply_markup
     )
 
+
 # DAILY TASK COUNT
 async def send_daily_task_count(context: CallbackContext):
     # Get today's ads count (only active ads)
-    cur.execute("SELECT COUNT(*) FROM ads WHERE status = 'active' AND date(created_at) = CURRENT_DATE")
-    ads_count = cur.fetchone()[0]
+    cursor.execute("SELECT COUNT(*) FROM ads WHERE status = 'active' AND date(created_at) = CURRENT_DATE")
+    ads_count = cursor.fetchone()[0]
 
     if ads_count == 0:
         return  # No ads today, skip sending
 
     # Fetch all opted-in users
-    cur.execute("SELECT id FROM clickbotusers WHERE notify_tasks = TRUE")
-    users = cur.fetchall()
+    cursor.execute("SELECT id FROM clickbotusers WHERE notify_tasks = TRUE")
+    users = cursor.fetchall()
 
     for (uid,) in users:
         try:
@@ -836,36 +837,62 @@ async def send_daily_task_count(context: CallbackContext):
             continue
 
 
+
 async def my_ads(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
-    # Get ads count
+    # Get total ad count
     with get_db_connection() as conn:
         with conn.cursor(row_factory=dict_row) as cursor:
-            cursor.execute(
-                "SELECT COUNT(*) AS cnt FROM ads WHERE user_id = %s", 
-                (user_id,)
-            )
+            cursor.execute("SELECT COUNT(*) AS cnt FROM ads WHERE user_id = %s", (user_id,))
             count = cursor.fetchone()["cnt"]
 
-    # Send main "My Ads" menu
+    # Send menu
     text = f"Here you can manage all your running/expired promotions. ({count} / {MAX_ADS_PER_USER})"
     keyboard = [["➕ New Ad ➕"], ["🔙 Back"]]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
     await update.message.reply_text(text, reply_markup=reply_markup)
 
-    # Fetch ads with details
+    # Fetch all ads from different ad type tables
     with get_db_connection() as conn:
         with conn.cursor(row_factory=dict_row) as cursor:
             cursor.execute("""
-                SELECT 
-                    a.id, a.user_id, a.ad_type, a.details, a.status,
-                    d.cpc, d.budget, d.clicks, d.skipped
+                SELECT a.id, a.user_id, a.ad_type, a.status,
+                       d.cpc, d.budget, d.clicks, d.skipped,
+                       NULL AS title, NULL AS description
                 FROM ads a
                 JOIN post_view_ads_details d ON a.id = d.ad_id
                 WHERE a.user_id = %s
-                ORDER BY a.created_at DESC
-            """, (user_id,))
+
+                UNION ALL
+
+                SELECT a.id, a.user_id, a.ad_type, a.status,
+                       d.cpc, d.budget, d.clicks, d.skipped,
+                       d.title, d.description
+                FROM ads a
+                JOIN bot_ads_details d ON a.id = d.ad_id
+                WHERE a.user_id = %s
+
+                UNION ALL
+
+                SELECT a.id, a.user_id, a.ad_type, a.status,
+                       d.cpc, d.budget, d.clicks, d.skipped,
+                       d.title, d.description
+                FROM ads a
+                JOIN link_ads_details d ON a.id = d.ad_id
+                WHERE a.user_id = %s
+
+                UNION ALL
+
+                SELECT a.id, a.user_id, a.ad_type, a.status,
+                       d.cpc, d.budget, d.clicks, d.skipped,
+                       d.title, d.description
+                FROM ads a
+                JOIN channel_ads_details d ON a.id = d.ad_id
+                WHERE a.user_id = %s
+
+                ORDER BY id DESC
+            """, (user_id, user_id, user_id, user_id))
             ads = cursor.fetchall()
 
     if not ads:
@@ -873,21 +900,16 @@ async def my_ads(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     for ad in ads:
-        details = ad["details"] or {}
-        title = details.get("title")
-        description = details.get("description")
+        # Build base ad text
+        ad_text = f"⚙️ <b>Campaign #{ad['id']}</b> - 📃 <b>{ad['ad_type']}</b>\n"
 
-        # Build base ad text in HTML
-        ad_text = (
-            f"⚙️ <b>Campaign #{ad['id']}</b> - 📃 <b>{ad['ad_type']}</b>\n"
-        )
+        # Show title & description if available
+        if ad['title']:
+            ad_text += f"📌 <b>{ad['title']}</b>\n"
+        if ad['description']:
+            ad_text += f"📝 {ad['description']}\n"
 
-        # If title or description exist, add them
-        if title:
-            ad_text += f"📌 <b>{title}</b>\n"
-        if description:
-            ad_text += f"📝 {description}\n"
-
+        # Show stats
         ad_text += (
             f"💰 <b>CPC:</b> {float(ad['cpc']):.6f} SOL\n"
             f"💵 <b>Budget:</b> {float(ad['budget']):.6f} SOL\n\n"
@@ -896,6 +918,7 @@ async def my_ads(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"⏭ <b>Skipped:</b> {ad['skipped']} times\n"
         )
 
+        # Inline action buttons
         buttons = [
             [
                 InlineKeyboardButton(
@@ -3279,6 +3302,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
