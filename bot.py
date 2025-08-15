@@ -3156,7 +3156,7 @@ def main():
     application.add_error_handler(error_handler)
     application.job_queue.run_daily(
         send_daily_task_count,
-        time=time(hour=9, minute=0, tzinfo=UTC),  # 9 AM UTC
+        time=time(hour=9, minute=0, tzinfo=timezone.utc),  # 9 AM UTC
         name="daily_task_notification"
     )
 
@@ -3280,6 +3280,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
