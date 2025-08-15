@@ -758,9 +758,10 @@ async def referrals_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
-    # Get current preference
-    cursor.execute("SELECT notify_tasks FROM clickbotusers WHERE id = %s", (user_id,))
-    current_pref = cursor.fetchone()[0]
+    with get_db_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT notify_tasks FROM clickbotusers WHERE id = %s", (user_id,))
+            current_pref = cursor.fetchone()[0]
 
     notif_status = "✅ Enabled" if current_pref else "❌ Disabled"
 
@@ -784,18 +785,17 @@ async def toggle_task_notification(update: Update, context: ContextTypes.DEFAULT
     await query.answer()
     user_id = query.from_user.id
 
-    # Get current preference
-    cursor.execute("SELECT notify_tasks FROM clickbotusers WHERE id = %s", (user_id,))
-    current_pref = cursor.fetchone()[0]
+    with get_db_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT notify_tasks FROM clickbotusers WHERE id = %s", (user_id,))
+            current_pref = cursor.fetchone()[0]
 
-    # Toggle preference
-    new_pref = not current_pref
-    cursor.execute("UPDATE clickbotusers SET notify_tasks = %s WHERE id = %s", (new_pref, user_id))
-    conn.commit()
+            new_pref = not current_pref
+            cursor.execute("UPDATE clickbotusers SET notify_tasks = %s WHERE id = %s", (new_pref, user_id))
+            conn.commit()
 
     status = "✅ Enabled" if new_pref else "❌ Disabled"
 
-    # Update keyboard with new status
     keyboard = [
         [InlineKeyboardButton("📢 Main Channel", url=MAIN_CHANNEL_LINK)],
         [InlineKeyboardButton(f"⚙ Task Notification: {status}", callback_data="toggle_task_notification")]
@@ -811,16 +811,21 @@ async def toggle_task_notification(update: Update, context: ContextTypes.DEFAULT
 
 # DAILY TASK COUNT
 async def send_daily_task_count(context: CallbackContext):
-    # Get today's ads count (only active ads)
-    cursor.execute("SELECT COUNT(*) FROM ads WHERE status = 'active' AND date(created_at) = CURRENT_DATE")
-    ads_count = cursor.fetchone()[0]
+    with get_db_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                SELECT COUNT(*) 
+                FROM ads 
+                WHERE status = 'active' 
+                  AND date(created_at) = CURRENT_DATE
+            """)
+            ads_count = cursor.fetchone()[0]
 
-    if ads_count == 0:
-        return  # No ads today, skip sending
+            if ads_count == 0:
+                return
 
-    # Fetch all opted-in users
-    cursor.execute("SELECT id FROM clickbotusers WHERE notify_tasks = TRUE")
-    users = cursor.fetchall()
+            cursor.execute("SELECT id FROM clickbotusers WHERE notify_tasks = TRUE")
+            users = cursor.fetchall()
 
     for (uid,) in users:
         try:
@@ -835,6 +840,7 @@ async def send_daily_task_count(context: CallbackContext):
             )
         except Exception:
             continue
+
 
 
 
@@ -901,13 +907,13 @@ async def my_ads(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     for ad in ads:
         # Build base ad text
-        ad_text = f"⚙️ <b>Campaign #{ad['id']}</b> - 📃 <b>{ad['ad_type']}</b>\n"
+        ad_text = f"⚙️ <b>Campaign #{ad['id']}</b> - 📃 <b>{ad['ad_type']}</b>\n\n"
 
         # Show title & description if available
         if ad['title']:
             ad_text += f"📌 <b>{ad['title']}</b>\n"
         if ad['description']:
-            ad_text += f"📝 {ad['description']}\n"
+            ad_text += f"📝 {ad['description']}\n\n"
 
         # Show stats
         ad_text += (
@@ -3302,6 +3308,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
