@@ -900,43 +900,55 @@ async def channel_username_handler(update: Update, context: ContextTypes.DEFAULT
         await update.message.reply_text("Cancelled channel ad creation.", reply_markup=ReplyKeyboardRemove())
         return ConversationHandler.END
 
-    # Detect if it's a link or a username
     channel_input = text
     bot = context.bot
+    channel_link = None
+    chat = None
 
     try:
-        if channel_input.startswith("https://t.me/"):
-            # Private or public link
+        if channel_input.startswith("https://t.me/+") or channel_input.startswith("https://t.me/joinchat/"):
+            # Private invite link — can't verify via get_chat
             channel_link = channel_input
-            chat = await bot.get_chat(channel_link)
+            context.user_data["channel_username"] = None
+            context.user_data["channel_chat_id"] = None
+
+        elif channel_input.startswith("https://t.me/"):
+            # Public link
+            username = channel_input.split("https://t.me/")[1].strip("/")
+            if not username.startswith("@"):
+                username = "@" + username
+            chat = await bot.get_chat(username)
+            channel_link = f"https://t.me/{username.lstrip('@')}"
+
         else:
-            # Username form
+            # Just a username
             if not channel_input.startswith("@"):
                 channel_input = "@" + channel_input
             chat = await bot.get_chat(channel_input)
             channel_link = f"https://t.me/{channel_input.lstrip('@')}"
 
-        # Verify bot admin rights
-        bot_member = await bot.get_chat_member(chat.id, bot.id)
-        if bot_member.status not in ["administrator", "creator"]:
-            await update.message.reply_text(
-                "❌ Make the bot ADMIN of your channel/group with rights to add people!\nPlease try again.",
-                reply_markup=ReplyKeyboardMarkup([["🔙 Back"]], resize_keyboard=True, one_time_keyboard=True),
-            )
-            return CHANNEL_USERNAME
+        # If we could get a chat object, verify bot admin rights
+        if chat:
+            bot_member = await bot.get_chat_member(chat.id, bot.id)
+            if bot_member.status not in ["administrator", "creator"]:
+                await update.message.reply_text(
+                    "❌ Make the bot ADMIN of your channel/group with rights to add people!\nPlease try again.",
+                    reply_markup=ReplyKeyboardMarkup([["🔙 Back"]], resize_keyboard=True, one_time_keyboard=True),
+                )
+                return CHANNEL_USERNAME
+            context.user_data["channel_username"] = chat.username if chat.username else None
+            context.user_data["channel_chat_id"] = chat.id
 
     except Exception as e:
         await update.message.reply_text(
             f"❌ Could not access the channel/group: {e}\n"
-            "Make sure the link/username is correct and the bot is added as admin.",
+            "Make sure the link/username is correct and the bot is added as admin (except for private links).",
             reply_markup=ReplyKeyboardMarkup([["🔙 Back"]], resize_keyboard=True, one_time_keyboard=True),
         )
         return CHANNEL_USERNAME
-        
-    # Store exact details for later
-    context.user_data["channel_username"] = chat.username if chat.username else None
-    context.user_data["channel_link"] = channel_link
-    context.user_data["channel_chat_id"] = chat.id
+
+    # Store link exactly as given for later button creation
+    context.user_data["channel_link"] = channel_link if channel_link else channel_input
 
     await update.message.reply_text(
         "Enter a title for your ad:",
@@ -1302,7 +1314,8 @@ async def channel_joined(update: Update, context: ContextTypes.DEFAULT_TYPE, ad_
     channel_username = details.get("channel_username", "").lstrip("@")
     private_chat_id = details.get("chat_id")
 
-    target_id = f"@{channel_username}" if channel_username else private_chat_id
+    # ✅ Prefer chat_id for verification, fallback to username
+    target_id = private_chat_id if private_chat_id else (f"@{channel_username}" if channel_username else None)
 
     if not target_id:
         await context.bot.edit_message_text(
@@ -3201,6 +3214,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
