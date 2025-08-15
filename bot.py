@@ -110,6 +110,12 @@ def ipn_listener():
                     WHERE id = %s
                 """, (amount, user_id))
 
+                # 2️⃣ Store deposit record
+                cursor.execute("""
+                    INSERT INTO deposits (user_id, amount)
+                    VALUES (%s, %s)
+                """, (user_id, amount))
+
                 # 2️⃣ Check if they have a referrer
                 cursor.execute("SELECT referral_id FROM clickbotusers WHERE id = %s", (user_id,))
                 ref_row = cursor.fetchone()
@@ -392,7 +398,7 @@ async def unified_message_handler(update: Update, context: ContextTypes.DEFAULT_
     elif text == "🙌 Referrals":
         await referrals_command(update, context)
     elif text == "📜 History":
-        await update.message.reply_text("🛠 Transaction history will show here.")
+        await history_command(update, context)
     elif text == "🔁 Convert":
         await handle_convert(update, context)
     elif text == "⚙ Settings":
@@ -698,6 +704,63 @@ async def cancel_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Go back to start menu
     await start(update, context)
     return ConversationHandler.END
+
+
+# HISTORY COMMAND
+async def history_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+
+    with get_db_connection() as conn:
+        with conn.cursor() as cursor:
+            # Get deposits (order by newest first)
+            cursor.execute("""
+                SELECT amount, created_at 
+                FROM deposits 
+                WHERE user_id = %s
+                ORDER BY created_at DESC
+                LIMIT 10
+            """, (user_id,))
+            deposits = cursor.fetchall()
+
+            # Get withdrawals (order by newest first)
+            cursor.execute("""
+                SELECT amount, status, created_at 
+                FROM withdrawals 
+                WHERE user_id = %s
+                ORDER BY created_at DESC
+                LIMIT 10
+            """, (user_id,))
+            withdrawals = cursor.fetchall()
+
+    # Format deposits
+    deposit_lines = []
+    if deposits:
+        for amt, dt in deposits:
+            deposit_lines.append(f"💰 +{amt:.6f} SOL — {dt.strftime('%Y-%m-%d %H:%M')}")
+    else:
+        deposit_lines.append("No deposits yet.")
+
+    # Format withdrawals
+    withdraw_lines = []
+    if withdrawals:
+        for amt, status, dt in withdrawals:
+            withdraw_lines.append(f"📤 -{amt:.6f} SOL — {status.capitalize()} — {dt.strftime('%Y-%m-%d %H:%M')}")
+    else:
+        withdraw_lines.append("No withdrawals yet.")
+
+    # Final message
+    msg = (
+        "📜 **Transaction History**\n\n"
+        "=== Deposits ===\n" +
+        "\n".join(deposit_lines) +
+        "\n\n=== Withdrawals ===\n" +
+        "\n".join(withdraw_lines) +
+        "\n\n_Showing last 10 of each_"
+    )
+
+    await update.message.reply_text(msg, parse_mode="Markdown")
+
+
 
 async def referrals_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = getattr(update.effective_user, "id", update.effective_user)
@@ -3309,6 +3372,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
