@@ -847,9 +847,9 @@ async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🆘️ Help & Support\n"
         "---------------------\n"
         "👮🏻‍♂️ Support: @SolHiveSupport\n"
-        "⁉️ Common Questions: @SolEarnHiveUpdates",
-        parse_mode="Markdown"
-    )
+        "⁉️ Common Questions: @SolEarnHiveUpdates\n\n"
+        "⚙ **Settings**\n\n" "Manage your preferences and notifications below:",
+        parse_mode="Markdown", reply_markup=reply_markup )
 
 
 
@@ -3382,6 +3382,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
