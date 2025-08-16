@@ -831,16 +831,26 @@ async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     keyboard = [
         [InlineKeyboardButton("📢 Main Channel", url=MAIN_CHANNEL_LINK)],
+        [InlineKeyboardButton("FAQ", url=f"https://telegra.ph/Sol-Earn-Hive-FAQ-08-16")],
         [InlineKeyboardButton(f"⚙ Task Notification: {notif_status}", callback_data="toggle_task_notification")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     await update.message.reply_text(
-        "⚙ **Settings**\n\n"
-        "Manage your preferences and notifications below:",
-        parse_mode="Markdown",
-        reply_markup=reply_markup
+        "SOL EARNHIVE BOT  - SINCE AUGUST 2022\n\n"
+        "---------------------\n\n"
+        "⏳ Earn CRYPTO by completing simple tasks like viewing posts, joining groups, or sharing links — "
+        "or create your own task and pay others to complete it.\n\n"
+        "💡What is SOL (Solana)?\n"
+        "SOL is a digital currency (cryptocurrency) used for fast and low-cost payments across the internet.\n\n"
+        "⚠️ Payments for services can be made *only through this bot*. Beware of people claiming to be representatives. ⚠️\n\n"
+        "🆘️ Help & Support\n"
+        "---------------------\n"
+        "👮🏻‍♂️ Support: @SolHiveSupport\n"
+        "⁉️ Common Questions: @SolEarnHiveUpdates",
+        parse_mode="Markdown"
     )
+
 
 
 # TOGGLE TASK NOTIFICATION
@@ -3373,6 +3383,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
