@@ -1632,8 +1632,7 @@ async def bot_title_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     context.user_data["bot_title"] = title
     await update.message.reply_text(
-        "✏️ Enter a description for your ad:\n\n• This will be the first thing users see and it should grab their attention and make them want to click on your link or check out your product/service.
-",
+        "✏️ Enter a description for your ad:\n\n• This will be the first thing users see and it should grab their attention and make them want to click on your link or check out your product/service.",
         reply_markup=ReplyKeyboardMarkup([["🔙 Back"]], resize_keyboard=True, one_time_keyboard=True),
     )
     return BOT_DESCRIPTION
@@ -3383,6 +3382,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
