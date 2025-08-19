@@ -884,7 +884,7 @@ async def toggle_task_notification(update: Update, context: ContextTypes.DEFAULT
 
 
 # DAILY TASK COUNT
-async def send_daily_task_count(context: CallbackContext):
+async def send_daily_task_count(context: ContextTypes.DEFAULT_TYPE):
     with get_db_connection() as conn:
         with conn.cursor() as cursor:
             cursor.execute("""
@@ -3391,6 +3391,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
