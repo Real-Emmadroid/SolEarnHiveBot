@@ -917,24 +917,17 @@ async def send_daily_task_count(context: CallbackContext):
 
 def setup_daily_task_job(application):
     """Schedule daily task count notification at 8:00 AM UTC"""
-    now = datetime.now(timezone.utc)
+    first_run = timedelta(seconds=60)
 
-    # Target time: 08:00 UTC today
-    target_time = now.replace(hour=8, minute=0, second=0, microsecond=0)
-
-    # If it's already past 08:00 today, schedule for tomorrow
-    if now >= target_time:
-        target_time += timedelta(days=1)
-
-    application.job_queue.run_daily(
+    application.job_queue.run_repeating(
         callback=send_daily_task_count,
-        time=time(8, 0, tzinfo=timezone.utc),  # 08:00 UTC
+        interval=300,  # Every 5 minutes
+        first=first_run,  # First run after 60 seconds
         name="daily_task_notifier"
     )
 
     logger.info(
-        f"⏰ Daily task job scheduled - first run at {target_time.strftime('%Y-%m-%d %H:%M:%S %Z')} "
-        f"(then every day at 08:00 UTC)"
+        f"⏰ Daily task notification job scheduled"
     )
 
 
@@ -3398,6 +3391,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
