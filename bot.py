@@ -890,8 +890,7 @@ async def send_daily_task_count(context: ContextTypes.DEFAULT_TYPE):
             cursor.execute("""
                 SELECT COUNT(*) 
                 FROM ads 
-                WHERE status = 'active' 
-                  AND date(created_at) = CURRENT_DATE
+                WHERE status = 'active'
             """)
             ads_count = cursor.fetchone()[0]
 
@@ -3391,6 +3390,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
