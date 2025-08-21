@@ -419,7 +419,7 @@ async def unified_message_handler(update: Update, context: ContextTypes.DEFAULT_
         await start_deposit(update, context)
     elif text == "➖ Withdraw":
         await start_withdraw(update, context)
-    elif text in ("🔙 Back", "🔙 Cancel"):
+    elif text in ("🔙 Back", "🔙 Cancel", "🔙 back"):
         await start(update, context)
         return ConversationHandler.END
     # DO NOT add a final else clause 
@@ -2019,12 +2019,6 @@ async def handle_bot_started(update: Update, context: ContextTypes.DEFAULT_TYPE,
                 bot_link = ad_data[1]
                 cpc = float(ad_data[2])
 
-        # Delete the original message
-        try:
-            await context.bot.delete_message(chat_id, message_id)
-        except Exception as e:
-            print(f"Couldn't delete message: {e}")
-
         # Set verification state
         context.user_data["verify_state"] = {
             "ad_id": ad_id,
@@ -3394,6 +3388,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
