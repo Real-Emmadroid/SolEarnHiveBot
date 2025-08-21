@@ -17,7 +17,6 @@ from telegram.error import BadRequest, TelegramError
 import traceback
 import html
 import time
-import datetime
 import hmac, hashlib
 import pytz
 from psycopg.rows import dict_row  # ✅ for psycopg3
@@ -30,7 +29,7 @@ from functools import lru_cache
 from io import BytesIO
 import threading
 from collections import defaultdict
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, time as dt_time, timezone, timedelta
 from telegram import MessageEntity, MessageOriginUser, MessageOriginChat, MessageOriginChannel, InputMediaPhoto, Update, ChatMember, Poll, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, ReplyKeyboardRemove, CallbackQuery, ChatMember, ChatPermissions, BotCommand, Bot
 from telegram.ext import ApplicationBuilder, Application, CommandHandler, ConversationHandler, CallbackContext, CallbackQueryHandler, MessageHandler, filters, JobQueue, ContextTypes, ChatMemberHandler
 from telegram.constants import ChatAction, ChatMemberStatus, ParseMode, MessageEntityType
@@ -919,14 +918,14 @@ def setup_daily_task_job(application):
     """Schedule daily task count notification at 9:00 AM UTC"""
 
     # Schedule the first run exactly at 09:00 UTC tomorrow if time already passed
-    now = datetime.datetime.now(datetime.timezone.utc)
-    first_run = datetime.datetime.combine(now.date(), datetime.time(9, 0, tzinfo=datetime.timezone.utc))
+    now = datetime.now(timezone.utc)
+    first_run = datetime.combine(now.date(), dt_time(9, 0, tzinfo=timezone.utc))  # Use dt_time here
     if now >= first_run:
-        first_run += datetime.timedelta(days=1)
+        first_run += timedelta(days=1)
 
     application.job_queue.run_daily(
         callback=send_daily_task_count,
-        time=datetime.time(9, 0, tzinfo=datetime.timezone.utc),
+        time=dt_time(9, 0, tzinfo=timezone.utc),  # And here
         name="daily_task_notifier"
     )
 
@@ -3403,6 +3402,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
