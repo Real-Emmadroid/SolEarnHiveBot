@@ -919,13 +919,13 @@ def setup_daily_task_job(application):
 
     # Schedule the first run exactly at 08:00 UTC tomorrow if time already passed
     now = datetime.now(timezone.utc)
-    first_run = datetime.combine(now.date(), time(9, 0, tzinfo=timezone.utc))
+    first_run = datetime.combine(now.date(), datetime.time(9, 0, tzinfo=timezone.utc))
     if now >= first_run:
         first_run += timedelta(days=1)
 
     application.job_queue.run_daily(
         callback=send_daily_task_count,
-        time=time(9, 0, tzinfo=timezone.utc),
+        time=datetime.time(9, 0, tzinfo=timezone.utc),
         name="daily_task_notifier"
     )
 
@@ -3402,6 +3402,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
