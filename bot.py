@@ -17,6 +17,7 @@ from telegram.error import BadRequest, TelegramError
 import traceback
 import html
 import time
+import datetime
 import hmac, hashlib
 import pytz
 from psycopg.rows import dict_row  # ✅ for psycopg3
@@ -915,22 +916,22 @@ async def send_daily_task_count(context: ContextTypes.DEFAULT_TYPE):
             continue
 
 def setup_daily_task_job(application):
-    """Schedule daily task count notification at 8:00 AM UTC"""
+    """Schedule daily task count notification at 9:00 AM UTC"""
 
-    # Schedule the first run exactly at 08:00 UTC tomorrow if time already passed
-    now = datetime.now(timezone.utc)
-    first_run = datetime.combine(now.date(), datetime.time(9, 0, tzinfo=timezone.utc))
+    # Schedule the first run exactly at 09:00 UTC tomorrow if time already passed
+    now = datetime.datetime.now(datetime.timezone.utc)
+    first_run = datetime.datetime.combine(now.date(), datetime.time(9, 0, tzinfo=datetime.timezone.utc))
     if now >= first_run:
-        first_run += timedelta(days=1)
+        first_run += datetime.timedelta(days=1)
 
     application.job_queue.run_daily(
         callback=send_daily_task_count,
-        time=datetime.time(9, 0, tzinfo=timezone.utc),
+        time=datetime.time(9, 0, tzinfo=datetime.timezone.utc),
         name="daily_task_notifier"
     )
 
     logger.info(
-        f"⏰ Daily task notification job scheduled for 08:00 UTC daily (first run: {first_run})"
+        f"⏰ Daily task notification job scheduled for 09:00 UTC daily (first run: {first_run})"
     )
 
 
@@ -3402,6 +3403,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
