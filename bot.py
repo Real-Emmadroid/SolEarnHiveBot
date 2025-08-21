@@ -2019,6 +2019,31 @@ async def handle_bot_started(update: Update, context: ContextTypes.DEFAULT_TYPE,
                 bot_link = ad_data[1]
                 cpc = float(ad_data[2])
 
+        # Edit the original message instead of deleting it
+        try:
+            await query.edit_message_text(
+                f"📩 Please forward the welcome message from @{bot_username} to verify\n"
+                "You have 2 minutes to complete this.",
+                reply_markup=ReplyKeyboardMarkup(
+                    [["🔙 Cancel"]], 
+                    resize_keyboard=True,
+                    one_time_keyboard=True
+                )
+            )
+        except Exception as e:
+            print(f"Couldn't edit message: {e}")
+            # Fallback: send new message if edit fails
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=f"📩 Please forward the welcome message from @{bot_username} to verify\n"
+                     "You have 2 minutes to complete this.",
+                reply_markup=ReplyKeyboardMarkup(
+                    [["🔙 Cancel"]], 
+                    resize_keyboard=True,
+                    one_time_keyboard=True
+                )
+            )
+
         # Set verification state
         context.user_data["verify_state"] = {
             "ad_id": ad_id,
@@ -2027,23 +2052,12 @@ async def handle_bot_started(update: Update, context: ContextTypes.DEFAULT_TYPE,
             "expires": time.time() + 120  # 2 minute timeout
         }
 
-        # Request forwarded message
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text=f"📩 Please forward the welcome message from @{bot_username} to verify\n"
-                 "You have 2 minutes to complete this.",
-            reply_markup=ReplyKeyboardMarkup(
-                [["🔙 Cancel"]], 
-                resize_keyboard=True,
-                one_time_keyboard=True
-            )
-        )
-
     except (IndexError, ValueError):
         await query.answer("⚠️ Invalid ad ID format")
     except Exception as e:
         print(f"Error in bot started: {e}")
         await query.answer("⚠️ Error processing request")
+
 
 async def handle_forwarded_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not hasattr(update, 'message') or not hasattr(update.message, 'forward_origin'):
@@ -3388,6 +3402,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
