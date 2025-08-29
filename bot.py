@@ -377,7 +377,7 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
         # 🎛 Manage Ads
         elif data.startswith("toggle_ad:"):
             _, ad_id = data.split(":")
-            await toggle_ad_status(update, context, int(ad_id))
+            await toggle_ad(update, context, int(ad_id))
 
         elif data.startswith("delete_ad:"):
             _, ad_id = data.split(":")
@@ -3550,6 +3550,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
