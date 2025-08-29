@@ -1078,28 +1078,42 @@ async def toggle_ad(update: Update, context: ContextTypes.DEFAULT_TYPE, ad_id=No
         ad_id = int(query.data.split(":", 1)[1])
 
     with get_db_connection() as conn:
-        with conn.cursor() as cursor:
-            cursor.execute("SELECT status FROM ads WHERE id = %s AND user_id = %s", (ad_id, user_id))
-            row = cursor.fetchone()
+        with conn.cursor(row_factory=dict_row) as cursor:
+            cursor.execute("SELECT id, status, ad_type FROM ads WHERE id = %s AND user_id = %s", (ad_id, user_id))
+            ad = cursor.fetchone()
 
-            if not row:
-                await context.bot.edit_message_text(
-                    "❌ Ad not found or not yours.",
-                    chat_id=chat_id,
-                    message_id=message_id
-                )
+            if not ad:
+                await query.edit_message_text("❌ Ad not found or not yours.")
                 return
 
-            new_status = "paused" if row[0] == "active" else "active"
+            # flip status
+            new_status = "paused" if ad["status"] == "active" else "active"
             cursor.execute("UPDATE ads SET status = %s WHERE id = %s", (new_status, ad_id))
             conn.commit()
 
-    await context.bot.edit_message_text(
-        f"✅ Ad #{ad_id} is now <b>{new_status}</b>.",
-        chat_id=chat_id,
-        message_id=message_id,
+    # build new inline buttons with updated status
+    buttons = [
+        [
+            InlineKeyboardButton(
+                "⏸ Pause" if new_status == "active" else "▶ Resume",
+                callback_data=f"toggle_ad:{ad_id}"
+            ),
+            InlineKeyboardButton("❌ Delete", callback_data=f"delete_ad:{ad_id}")
+        ],
+        [
+            InlineKeyboardButton("🔺 Increase CPC", callback_data=f"increase_cpc:{ad_id}"),
+            InlineKeyboardButton("💵 Edit Daily Budget", callback_data=f"edit_budget:{ad_id}")
+        ]
+    ]
+
+    # just update the keyboard + status text, don’t wipe message
+    await query.edit_message_caption(
+        caption=f"⚙️ <b>Campaign #{ad_id}</b> - <b>{ad['ad_type']}</b>\n\n"
+                f"ℹ️ <b>Status:</b> {new_status}",
+        reply_markup=InlineKeyboardMarkup(buttons),
         parse_mode="HTML"
     )
+
 
 async def delete_ad(update: Update, context: ContextTypes.DEFAULT_TYPE, ad_id=None):
     query = update.callback_query
@@ -3536,6 +3550,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
