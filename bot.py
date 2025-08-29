@@ -374,6 +374,30 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
             _, ad_id = data.split(":")
             await channel_joined(update, context, int(ad_id))
 
+        # 🎛 Manage Ads
+        elif data.startswith("toggle_ad:"):
+            _, ad_id = data.split(":")
+            await toggle_ad_status(update, context, int(ad_id))
+
+        elif data.startswith("delete_ad:"):
+            _, ad_id = data.split(":")
+            await delete_ad(update, context, int(ad_id))
+
+        elif data.startswith("confirm_delete:"):
+            _, ad_id = data.split(":")
+            await confirm_delete(update, context, int(ad_id))
+     
+        elif data == "cancel_delete":
+            await cancel_delete(update, context)
+
+        elif data.startswith("increase_cpc:"):
+            _, ad_id = data.split(":")
+            await increase_cpc(update, context, int(ad_id))
+
+        elif data.startswith("edit_budget:"):
+            _, ad_id = data.split(":")
+            await edit_budget(update, context, int(ad_id))
+
         else:
             await query.answer("Unknown button action.")
 
@@ -1018,7 +1042,7 @@ async def my_ads(update: Update, context: ContextTypes.DEFAULT_TYPE):
         buttons = [
             [
                 InlineKeyboardButton(
-                    "⏸ Pause" if ad['status'] == 'Active' else "▶ Resume",
+                    "⏸ Pause" if ad['status'] == 'active' else "▶ Resume",
                     callback_data=f"toggle_ad:{ad['id']}"
                 ),
                 InlineKeyboardButton(
@@ -1040,6 +1064,116 @@ async def my_ads(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=InlineKeyboardMarkup(buttons),
             parse_mode="HTML"
         )
+
+
+async def toggle_ad(update: Update, context: ContextTypes.DEFAULT_TYPE, ad_id=None):
+    query = update.callback_query
+    user_id = query.from_user.id
+    chat_id = query.message.chat_id
+    message_id = query.message.message_id
+
+    await query.answer()
+
+    if ad_id is None:
+        ad_id = int(query.data.split(":", 1)[1])
+
+    with get_db_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT status FROM ads WHERE id = %s AND user_id = %s", (ad_id, user_id))
+            row = cursor.fetchone()
+
+            if not row:
+                await context.bot.edit_message_text(
+                    "❌ Ad not found or not yours.",
+                    chat_id=chat_id,
+                    message_id=message_id
+                )
+                return
+
+            new_status = "⏸ Pause" if row[0] == "active" else "▶ Resume"
+            cursor.execute("UPDATE ads SET status = %s WHERE id = %s", (new_status, ad_id))
+            conn.commit()
+
+    await context.bot.edit_message_text(
+        f"✅ Ad #{ad_id} is now <b>{new_status}</b>.",
+        chat_id=chat_id,
+        message_id=message_id,
+        parse_mode="HTML"
+    )
+
+async def delete_ad(update: Update, context: ContextTypes.DEFAULT_TYPE, ad_id=None):
+    query = update.callback_query
+    user_id = query.from_user.id
+    chat_id = query.message.chat_id
+    message_id = query.message.message_id
+
+    await query.answer()
+
+    if ad_id is None:
+        ad_id = int(query.data.split(":", 1)[1])
+
+    keyboard = [
+        [
+            InlineKeyboardButton("✅ Yes, delete", callback_data=f"confirm_delete:{ad_id}"),
+            InlineKeyboardButton("❌ No, cancel", callback_data="cancel_delete"),
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await context.bot.edit_message_text(
+        f"⚠️ Are you sure you want to delete Ad #{ad_id}?\n\nThis action cannot be undone.",
+        chat_id=chat_id,
+        message_id=message_id,
+        reply_markup=reply_markup
+    )
+
+async def confirm_delete(update: Update, context: ContextTypes.DEFAULT_TYPE, ad_id=None):
+    query = update.callback_query
+    user_id = query.from_user.id
+    chat_id = query.message.chat_id
+    message_id = query.message.message_id
+
+    await query.answer()
+
+    if ad_id is None:
+        ad_id = int(query.data.split(":", 1)[1])
+
+    with get_db_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("DELETE FROM ads WHERE id = %s AND user_id = %s RETURNING id", (ad_id, user_id))
+            row = cursor.fetchone()
+            conn.commit()
+
+    if not row:
+        await context.bot.edit_message_text(
+            "❌ Ad not found or not yours.",
+            chat_id=chat_id,
+            message_id=message_id
+        )
+        return
+
+    await context.bot.edit_message_text(
+        f"🗑️ Ad #{ad_id} has been <b>deleted</b>.",
+        chat_id=chat_id,
+        message_id=message_id,
+        parse_mode="HTML"
+    )
+
+async def cancel_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    chat_id = query.message.chat_id
+    message_id = query.message.message_id
+
+    await query.answer("❌ Deletion cancelled.")
+
+    await context.bot.edit_message_text(
+        "❎ Ad deletion cancelled.",
+        chat_id=chat_id,
+        message_id=message_id
+    )
+
+
+
 
 
 promo_type_keyboard = [
@@ -3402,6 +3536,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
