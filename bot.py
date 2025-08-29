@@ -1090,7 +1090,7 @@ async def toggle_ad(update: Update, context: ContextTypes.DEFAULT_TYPE, ad_id=No
                 )
                 return
 
-            new_status = "⏸ Pause" if row[0] == "active" else "▶ Resume"
+            new_status = "paused" if row[0] == "active" else "active"
             cursor.execute("UPDATE ads SET status = %s WHERE id = %s", (new_status, ad_id))
             conn.commit()
 
@@ -3536,6 +3536,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
